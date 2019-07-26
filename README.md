@@ -1,2 +1,2 @@
-# AMEX
-An Attention Model for Traffic Prediction with External Knowledge Embedded
+# AMEX (An Attention Model with External Knowledge Embedded for Traffic Prediction)
+An Attention Model with External Knowledge Embedded for Traffic Prediction
