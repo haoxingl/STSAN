@@ -1,2 +1,2 @@
-# STAM_EX (An Spatio-Temporal Attention Model for Traffic Prediction with External Knowledge Embedded)
-An Spatio-Temporal Attention Model for Traffic Prediction with External Knowledge Embedded
+# Transformer_Ex (Enhanced Transformer with External Knowledge Embedded)
+Enhanced Transformer with External Knowledge Embedded for Traffic Prediction
