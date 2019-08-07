@@ -24,7 +24,7 @@ class data_loader:
         self.ex_knlg_val = np.load(self.parameters.external_knowledge_val)['external_knowledge']
         self.ex_knlg_test = np.load(self.parameters.external_knowledge_test)['external_knowledge']
 
-    def generate_data(self, datatype='train', predicted_weather=True, conv_embedding=False, target_size=6, hist_day_num=7,
+    def generate_data(self, datatype='train', predicted_weather=True, conv_embedding=False, target_size=13, hist_day_num=7,
                       hist_day_seq_len=25, curr_day_seq_len=12):
 
         self.load_flow()

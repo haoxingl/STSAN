@@ -13,30 +13,31 @@ import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 dataset = 'taxi'
 verbose = 0
-use_all_data = True     # True if want to use the 7 sequences of all 7 previous days (like in STAM_EX),
-                        # Flase to use only the data of previous 12 timeslot in current day.
+use_all_data = True     # True if want to use the 25 sequences of all 7 previous days,
+                        # Flase to use only the data of previous 12 sequences in current day.
 
 if dataset == 'taxi':
     d_loader = dl.data_loader(dataset)
+    output_size = parameters_nyctaxi.output_size
     mask_threshold = 10 / parameters_nyctaxi.flow_train_max
 elif dataset == 'bike':
     d_loader = dl.data_loader(dataset)
+    output_size = parameters_nycbike.output_size
     mask_threshold = 10 / parameters_nycbike.flow_train_max
 
-hist_flow_train, hist_ex_train, curr_flow_train, curr_ex_train, next_exs_train, targets_train \
+hist_flow_train, _, curr_flow_train, _, _, targets_train \
     = d_loader.generate_data()
 
-hist_flow_test, hist_ex_test, curr_flow_test, curr_ex_test, next_exs_test, targets_test \
+hist_flow_test, _, curr_flow_test, _, _, targets_test \
     = d_loader.generate_data(datatype='test')
 
 flow_train = np.concatenate([hist_flow_train, curr_flow_train], axis=1)
-ex_train = np.concatenate([hist_ex_train, curr_ex_train], axis=1)
 
 flow_test = np.concatenate([hist_flow_test, curr_flow_test], axis=1)
-ex_test = np.concatenate([hist_ex_test, curr_ex_test], axis=1)
 
 if use_all_data:
     original_train = flow_train
@@ -44,22 +45,6 @@ if use_all_data:
 else:
     original_train = curr_flow_train
     original_test = curr_flow_test
-
-x_rnn_train = original_train.reshape(original_train.shape[0], original_train.shape[1], \
-                                      2, int(original_train.shape[2] / 2)).transpose((0, 3, 1, 2)).reshape(-1,
-                                                                                                            original_train.shape[
-                                                                                                                1], 2)
-y_rnn_train = targets_train.reshape(targets_train.shape[0], targets_train.shape[1], \
-                                    2, int(targets_train.shape[2] / 2)).transpose((0, 3, 1, 2))[:, :, 0, :].reshape(-1,
-                                                                                                                    2)
-
-x_rnn_test = original_test.reshape(original_test.shape[0], original_test.shape[1], \
-                                    2, int(original_test.shape[2] / 2)).transpose((0, 3, 1, 2)).reshape(-1,
-                                                                                                         original_test.shape[
-                                                                                                             1], 2)
-y_rnn_test = targets_test.reshape(targets_test.shape[0], targets_test.shape[1], \
-                                  2, int(targets_test.shape[2] / 2)).transpose((0, 3, 1, 2))[:, :, 0, :].reshape(-1,
-                                                                                                                 2)
 
 
 class CustomStopper(tf.keras.callbacks.EarlyStopping):
@@ -137,14 +122,15 @@ def var(flow, target):
 
 
 def MLP(x_train, y_train, x_test, y_test):
+    half_size = int(x_train.shape[2] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(
         [
             layers.Flatten(),
-            layers.Dense(10, activation='relu'),
-            layers.Dense(10, activation='relu'),
-            layers.Dense(2, activation='relu')
+            layers.Dense(2*output_size, activation='relu'),
+            layers.Dense(2*output_size, activation='relu'),
+            layers.Dense(output_size)
         ]
     )
 
@@ -160,21 +146,21 @@ def MLP(x_train, y_train, x_test, y_test):
     mask.astype(np.float32)
     y_test *= mask
     y_pred *= mask
-    in_rmse = np.sqrt(np.mean(np.square(y_test[:, 0] - y_pred[:, 0])))
-    out_rmse = np.sqrt(np.mean(np.square(y_test[:, 1] - y_pred[:, 1])))
-    in_mae = np.mean(np.abs(y_test[:, 0] - y_pred[:, 0]))
-    out_mae = np.mean(np.abs(y_test[:, 1] - y_pred[:, 1]))
+    in_rmse = np.sqrt(np.mean(np.square(y_test[:, :half_size] - y_pred[:, :half_size])))
+    out_rmse = np.sqrt(np.mean(np.square(y_test[:, half_size:] - y_pred[:, half_size:])))
+    in_mae = np.mean(np.abs(y_test[:, :half_size] - y_pred[:, :half_size]))
+    out_mae = np.mean(np.abs(y_test[:, half_size:] - y_pred[:, half_size:]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def lstm(x_train, y_train, x_test, y_test):
-
+    half_size = int(x_train.shape[2] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(
         [
             tf.keras.layers.LSTM(64, recurrent_initializer='glorot_uniform'),
-            tf.keras.layers.Dense(2, activation='relu')
+            tf.keras.layers.Dense(output_size)
         ]
     )
 
@@ -184,27 +170,42 @@ def lstm(x_train, y_train, x_test, y_test):
 
     model.fit(x_train, y_train, epochs=500, batch_size=64, validation_split=0.2, callbacks=[early_stop], verbose=verbose)
 
-    y_pred = model.predict(x_test)
+    in_rmse = []
+    out_rmse = []
+    in_mae = []
+    out_mae = []
 
-    mask = np.greater(y_test, mask_threshold)
-    mask.astype(np.float32)
-    y_test *= mask
-    y_pred *= mask
-    in_rmse = np.sqrt(np.mean(np.square(y_test[:, 0] - y_pred[:, 0])))
-    out_rmse = np.sqrt(np.mean(np.square(y_test[:, 1] - y_pred[:, 1])))
-    in_mae = np.mean(np.abs(y_test[:, 0] - y_pred[:, 0]))
-    out_mae = np.mean(np.abs(y_test[:, 1] - y_pred[:, 1]))
+    for i in range(12):
+        y_pred = model.predict(x_test)
+        x_test = np.concatenate([x_test, np.expand_dims(y_pred, axis=1)], axis=1)
+        mask = np.greater(y_test[:, i, :], mask_threshold)
+        mask.astype(np.float32)
+        y_test[:, i, :] *= mask
+        y_pred *= mask
+
+        in_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, :half_size] - y_pred[:, :half_size]))))
+        out_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, half_size:] - y_pred[:, half_size:]))))
+        in_mae.append(np.mean(np.abs(y_test[:, i, :half_size] - y_pred[:, :half_size])))
+        out_mae.append(np.mean(np.abs(y_test[:, i, half_size:] - y_pred[:, half_size:])))
+
+    for i in range(12):
+        print('Slot {} INFLOW_RMSE {:.8f} OUTFLOW_RMSE {:.8f} INFLOW_MAE {:.8f} OUTFLOW_MAE {:.8f}'.format(
+            i + 1,
+            in_rmse[i],
+            out_rmse[i],
+            in_mae[i],
+            out_mae[i]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def gru(x_train, y_train, x_test, y_test):
-
+    half_size = int(x_train.shape[2] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(
         [
             tf.keras.layers.GRU(64, recurrent_initializer='glorot_uniform'),
-            tf.keras.layers.Dense(2, activation='relu')
+            tf.keras.layers.Dense(output_size)
         ]
     )
 
@@ -214,58 +215,72 @@ def gru(x_train, y_train, x_test, y_test):
 
     model.fit(x_train, y_train, epochs=500, batch_size=64, validation_split=0.2, callbacks=[early_stop], verbose=verbose)
 
-    y_pred = model.predict(x_test)
+    in_rmse = []
+    out_rmse = []
+    in_mae = []
+    out_mae = []
 
-    mask = np.greater(y_test, mask_threshold)
-    mask.astype(np.float32)
-    y_test *= mask
-    y_pred *= mask
-    in_rmse = np.sqrt(np.mean(np.square(y_test[:, 0] - y_pred[:, 0])))
-    out_rmse = np.sqrt(np.mean(np.square(y_test[:, 1] - y_pred[:, 1])))
-    in_mae = np.mean(np.abs(y_test[:, 0] - y_pred[:, 0]))
-    out_mae = np.mean(np.abs(y_test[:, 1] - y_pred[:, 1]))
+    for i in range(12):
+        y_pred = model.predict(x_test)
+        x_test = np.concatenate([x_test, np.expand_dims(y_pred, axis=1)], axis=1)
+        mask = np.greater(y_test[:, i, :], mask_threshold)
+        mask.astype(np.float32)
+        y_test[:, i, :] *= mask
+        y_pred *= mask
+
+        in_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, :half_size] - y_pred[:, :half_size]))))
+        out_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, half_size:] - y_pred[:, half_size:]))))
+        in_mae.append(np.mean(np.abs(y_test[:, i, :half_size] - y_pred[:, :half_size])))
+        out_mae.append(np.mean(np.abs(y_test[:, i, half_size:] - y_pred[:, half_size:])))
+
+    for i in range(12):
+        print('Slot {} INFLOW_RMSE {:.8f} OUTFLOW_RMSE {:.8f} INFLOW_MAE {:.8f} OUTFLOW_MAE {:.8f}'.format(
+            i + 1,
+            in_rmse[i],
+            out_rmse[i],
+            in_mae[i],
+            out_mae[i]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 if __name__ == "__main__":
-    start = time.time()
-    print("Calculating Historical Average RMSE, MAE results...")
-    in_rmse, out_rmse, in_mae, out_mae = historical_average(original_test, targets_test[:, 0, :])
-    print("Historical average: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-          .format(in_rmse, out_rmse, in_mae, out_mae))
-    print("Time used: {} seconds".format(time.time() - start))
+    for i in range(10):
+        print("\nTest Round {}\n".format(i + 1))
 
-    start = time.time()
-    print("Calculating ARIMA RMSE, MAE results...")
-    in_rmse, out_rmse, in_mae, out_mae = arima(original_test, targets_test[:, 0, :])
-    print("ARIMA: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-          .format(in_rmse, out_rmse, in_mae, out_mae))
-    print("Time used: {} seconds".format(time.time() - start))
+        start = time.time()
+        print("Calculating Historical Average RMSE, MAE results...")
+        in_rmse, out_rmse, in_mae, out_mae = historical_average(original_test, targets_test[:, 0, :])
+        print("Historical average: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+              .format(in_rmse, out_rmse, in_mae, out_mae))
+        print("Time used: {} seconds".format(time.time() - start))
 
-    start = time.time()
-    print("Calculating VAR RMSE, MAE results...")
-    in_rmse, out_rmse, in_mae, out_mae = var(original_test, targets_test[:, 0, :])
-    print("VAR: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-          .format(in_rmse, out_rmse, in_mae, out_mae))
-    print("Time used: {} seconds".format(time.time() - start))
+        start = time.time()
+        print("Calculating ARIMA RMSE, MAE results...")
+        in_rmse, out_rmse, in_mae, out_mae = arima(original_test, targets_test[:, 0, :])
+        print("ARIMA: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+              .format(in_rmse, out_rmse, in_mae, out_mae))
+        print("Time used: {} seconds".format(time.time() - start))
 
-    start = time.time()
-    print("Calculating MLP RMSE, MAE results...")
-    in_rmse, out_rmse, in_mae, out_mae = MLP(x_rnn_train, y_rnn_train, x_rnn_test, y_rnn_test)
-    print("MLP: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-          .format(in_rmse, out_rmse, in_mae, out_mae))
-    print("Time used: {} seconds".format(time.time() - start))
+        start = time.time()
+        print("Calculating VAR RMSE, MAE results...")
+        in_rmse, out_rmse, in_mae, out_mae = var(original_test, targets_test[:, 0, :])
+        print("VAR: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+              .format(in_rmse, out_rmse, in_mae, out_mae))
+        print("Time used: {} seconds".format(time.time() - start))
 
-    start = time.time()
-    print("Calculating LSTM RMSE, MAE results...")
-    in_rmse, out_rmse, in_mae, out_mae = lstm(x_rnn_train, y_rnn_train, x_rnn_test, y_rnn_test)
-    print("LSTM: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-          .format(in_rmse, out_rmse, in_mae, out_mae))
-    print("Time used: {} seconds".format(time.time() - start))
+        start = time.time()
+        print("Calculating MLP RMSE, MAE results...")
+        in_rmse, out_rmse, in_mae, out_mae = MLP(flow_train, targets_train[:, 0, :], flow_test, targets_test[:, 0, :])
+        print("MLP: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+              .format(in_rmse, out_rmse, in_mae, out_mae))
+        print("Time used: {} seconds".format(time.time() - start))
 
-    start = time.time()
-    print("Calculating GRU RMSE, MAE results...")
-    in_rmse, out_rmse, in_mae, out_mae = gru(x_rnn_train, y_rnn_train, x_rnn_test, y_rnn_test)
-    print("GRU: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-          .format(in_rmse, out_rmse, in_mae, out_mae))
-    print("Time used: {} seconds".format(time.time() - start))
+        start = time.time()
+        print("Calculating LSTM RMSE, MAE results...")
+        in_rmse, out_rmse, in_mae, out_mae = lstm(flow_train, targets_train[:, 0, :], flow_test, targets_test)
+        print("Time used: {} seconds".format(time.time() - start))
+
+        start = time.time()
+        print("Calculating GRU RMSE, MAE results...")
+        in_rmse, out_rmse, in_mae, out_mae = gru(flow_train, targets_train[:, 0, :], flow_test, targets_test)
+        print("Time used: {} seconds".format(time.time() - start))

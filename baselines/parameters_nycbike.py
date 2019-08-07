@@ -17,16 +17,16 @@ timeslot_total = total_day * 24 * 60 * 60 / timeslot_sec
 loss_threshold = 10
 output_size = 224
 
-import numpy as np
-flow_train = np.load("./data/NYBike/flow_train.npz")['flow']
-flow_val = np.load("./data/NYBike/flow_val.npz")['flow']
-flow_test = np.load("./data/NYBike/flow_test.npz")['flow']
-trans_train = np.load("./data/NYBike/trans_train.npz")['trans']
-trans_val = np.load("./data/NYBike/trans_val.npz")['trans']
-trans_test = np.load("./data/NYBike/trans_test.npz")['trans']
-flow_train_max = flow_train.max()
-flow_val_max = flow_val.max()
-flow_test_max = flow_test.max()
-trans_train_max = trans_train.max()
-trans_val_max = trans_train.max()
-trans_test_max = trans_test.max()
+# import numpy as np
+# flow_train = np.load("./data/NYBike/flow_train.npz")['flow']
+# flow_val = np.load("./data/NYBike/flow_val.npz")['flow']
+# flow_test = np.load("./data/NYBike/flow_test.npz")['flow']
+# trans_train = np.load("./data/NYBike/trans_train.npz")['trans']
+# trans_val = np.load("./data/NYBike/trans_val.npz")['trans']
+# trans_test = np.load("./data/NYBike/trans_test.npz")['trans']
+# flow_train_max = flow_train.max()
+# flow_val_max = flow_val.max()
+# flow_test_max = flow_test.max()
+# trans_train_max = trans_train.max()
+# trans_val_max = trans_train.max()
+# trans_test_max = trans_test.max()
