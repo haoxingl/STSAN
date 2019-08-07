@@ -1,14 +1,9 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import tensorflow as tf
-from tensorflow.keras import layers
+from tensorflow.keras import layers, Model, Sequential
 
 import numpy as np
-
-import os
-
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 
 
 class FeedForwardEmbedding(layers.Layer):
@@ -27,14 +22,33 @@ class FeedForwardEmbedding(layers.Layer):
         return output
 
 
-""" This layer is not available yet!!!!! """
-class ConvEmbedding(layers.Layer):
-    def __init__(self, d_model, filters=64, rate=0.1):
-        super(ConvEmbedding, self).__init__()
-        pass
+class ConvolutionalEmbedding(layers.Layer):
+    def __init__(self, d_model, seq_len, num_layers=3, rate=0.1):
+        super(ConvolutionalEmbedding, self).__init__()
 
-    def call(self, input, training):
-        return False
+        self.seq_len = seq_len
+        self.num_layers = num_layers
+
+        self.conv_layers = [layers.Conv2D(d_model, (3, 3), padding='same') for _ in range(num_layers)]
+        self.dropout = layers.Dropout(rate)
+
+    def call(self, input, training, tar_size=None):
+        outputs = []
+        if tar_size is None:
+            seq_len = self.seq_len
+        else:
+            seq_len = tar_size
+        for i in range(seq_len):
+            tensor = gelu(self.conv_layers[0](input[:, :, :, i, :]))
+            for j in range(self.num_layers - 1):
+                tensor = gelu(self.conv_layers[j + 1](tensor))
+            tensor = tf.expand_dims(tensor, axis=3)
+            outputs.append(tensor)
+
+        output = tf.concat(outputs, axis=3)
+        output = self.dropout(output, training)
+
+        return output
 
 
 def get_angles(pos, i, d_model):
@@ -64,13 +78,8 @@ def gelu(tensor):
     return tensor * 0.5 * (1.0 + tf.math.erf(tensor / tf.math.sqrt(2.0)))
 
 
-def create_look_ahead_mask(size):
-    mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
-    return mask
-
-
 def scaled_dot_product_attention(q, k, v, mask):
-    matmul_qk = tf.matmul(q, k, transpose_b=True)  # (..., seq_len_q, seq_len_k)
+    matmul_qk = tf.matmul(q, k, transpose_b=True)
 
     dk = tf.cast(tf.shape(k)[-1], tf.float32)
     scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
@@ -81,6 +90,31 @@ def scaled_dot_product_attention(q, k, v, mask):
     attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)
 
     output = tf.matmul(attention_weights, v)
+
+    return output, attention_weights
+
+
+def scaled_dot_product_attention_3d(q, k, v, mask, ex_flag=False):
+    matmul_qk = tf.matmul(q, k, transpose_b=True)
+
+    dk = tf.cast(tf.shape(k)[-1], tf.float32)
+    scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
+
+    if mask is not None:
+        scaled_attention_logits += (mask * -1e9)
+
+    attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)
+
+    if ex_flag:
+        attention_weights_2 = tf.broadcast_to(attention_weights,
+                                            [tf.shape(v)[1], tf.shape(v)[2], tf.shape(v)[0], tf.shape(v)[3],
+                                             tf.shape(attention_weights)[-2], tf.shape(attention_weights)[-1]])
+        attention_weights_2 = tf.transpose(attention_weights_2, perm=[2, 0, 1, 3, 4, 5])
+
+        output = tf.matmul(attention_weights_2, v)
+
+    else:
+        output = tf.matmul(attention_weights, v)
 
     return output, attention_weights
 
@@ -130,54 +164,78 @@ class MultiHeadAttention(layers.Layer):
         return output, attention_weights
 
 
-class FuseLayer(layers.Layer):
-    def __init__(self, d_model):
-        super(FuseLayer, self).__init__()
+class MultiHeadAttention_3D(layers.Layer):
+    def __init__(self, d_model, num_heads):
+        super(MultiHeadAttention_3D, self).__init__()
+        self.num_heads = num_heads
+        self.d_model = d_model
 
-        self.dense_flow_1 = layers.Dense(d_model)
-        self.dense_ex_1 = layers.Dense(d_model)
-        self.dense_flow_2 = layers.Dense(d_model)
-        self.dense_ex_2 = layers.Dense(d_model)
+        assert d_model % self.num_heads == 0
 
-    def call(self, flow, ex):
-        f = gelu(self.dense_flow_1(flow) + self.dense_ex_1(ex))
+        self.depth = d_model // self.num_heads
 
-        flow_output = gelu(self.dense_flow_2(f))
-        ex_output = gelu(self.dense_ex_2(f))
+        self.wq = layers.Dense(d_model)
+        self.wk = layers.Dense(d_model)
+        self.wv = layers.Dense(d_model)
 
-        return flow_output, ex_output
+        self.dense = layers.Dense(d_model)
+
+    def split_heads_1d(self, x, batch_size):
+        x = tf.reshape(x, (batch_size, -1, self.num_heads, self.depth))
+        return tf.transpose(x, perm=[0, 2, 1, 3])
+
+    def split_heads_3d(self, x, batch_size):
+        x = tf.reshape(x, (batch_size, tf.shape(x)[1], tf.shape(x)[2], tf.shape(x)[3], self.num_heads, self.depth))
+        return tf.transpose(x, perm=[0, 1, 2, 4, 3, 5])
+
+    def call(self, v, k, q, mask, ex_flag=False):
+        batch_size = tf.shape(q)[0]
+
+        q = self.wq(q)
+        k = self.wk(k)
+        v = self.wv(v)
+
+        if ex_flag:
+            q = self.split_heads_1d(q, batch_size)
+            k = self.split_heads_1d(k, batch_size)
+        else:
+            q = self.split_heads_3d(q, batch_size)
+            k = self.split_heads_3d(k, batch_size)
+        v = self.split_heads_3d(v, batch_size)
+
+        scaled_attention, attention_weights = scaled_dot_product_attention_3d(
+            q, k, v, mask, ex_flag)
+
+        scaled_attention = tf.transpose(scaled_attention,
+                                        perm=[0, 1, 2, 4, 3, 5])
+
+        concat_attention = tf.reshape(scaled_attention,
+                                      (batch_size, tf.shape(scaled_attention)[1], tf.shape(scaled_attention)[2],
+                                       tf.shape(scaled_attention)[3], self.d_model))
+
+        output = self.dense(concat_attention)
+
+        return output, attention_weights
 
 
-class FuseLayer_FF(layers.Layer):
-    def __init__(self, d_model, dff=2048):
-        super(FuseLayer_FF, self).__init__()
-
-        self.dense_flow_1 = layers.Dense(d_model)
-        self.dense_ex_1 = layers.Dense(d_model)
-
-        self.dense_flow_ff = layers.Dense(dff)
-        self.dense_ex_ff = layers.Dense(dff)
-
-        self.dense_flow_2 = layers.Dense(d_model)
-        self.dense_ex_2 = layers.Dense(d_model)
-
-    def call(self, flow, ex):
-        f = gelu(self.dense_flow_1(flow) + self.dense_ex_1(ex))
-
-        flow_output = gelu(self.dense_flow_ff(f))
-        ex_output = gelu(self.dense_ex_ff(f))
-
-        flow_output = self.dense_flow_2(flow_output)
-        ex_output = self.dense_ex_2(ex_output)
-
-        return flow_output, ex_output
+def point_wise_feed_forward_network(d_model, dff):
+    return tf.keras.Sequential([
+        layers.Dense(dff, activation='relu'),
+        layers.Dense(d_model)
+    ])
 
 
 class EncoderLayer(layers.Layer):
-    def __init__(self, d_model, num_heads, dff, rate=0.1):
+    def __init__(self, d_model, num_heads, dff, rate=0.1, conv_embedding=False):
         super(EncoderLayer, self).__init__()
 
-        self.mha = MultiHeadAttention(d_model, num_heads)
+        self.conv_embedding = conv_embedding
+
+        if not conv_embedding:
+            self.mha = MultiHeadAttention(d_model, num_heads)
+        else:
+            self.mha = MultiHeadAttention_3D(d_model, num_heads)
+        self.ffn_x = point_wise_feed_forward_network(d_model, dff)
 
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
@@ -185,42 +243,33 @@ class EncoderLayer(layers.Layer):
         self.dropout1 = layers.Dropout(rate)
         self.dropout2 = layers.Dropout(rate)
 
-        self.mha_ex = MultiHeadAttention(d_model, num_heads)
-
-        self.layernorm1_ex = layers.LayerNormalization(epsilon=1e-6)
-        self.layernorm2_ex = layers.LayerNormalization(epsilon=1e-6)
-
-        self.dropout1_ex = layers.Dropout(rate)
-        self.dropout2_ex = layers.Dropout(rate)
-
-        self.fuselayer = FuseLayer_FF(d_model, dff=dff)
-
-    def call(self, x, ex, training, mask):
-        attn_output, _ = self.mha(x, x, x, mask)
+    def call(self, x, ex, training, mask, ex_flag=False):
+        if not self.conv_embedding:
+            attn_output, _ = self.mha(x, ex, ex, mask)
+        else:
+            attn_output, _ = self.mha(x, ex, ex, mask, ex_flag)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(x + attn_output)
 
-        attn_output_ex, _ = self.mha_ex(ex, ex, ex, mask)
-        attn_output_ex = self.dropout1_ex(attn_output_ex, training=training)
-        out1_ex = self.layernorm1_ex(ex + attn_output_ex)
-
-        out1_fused, out1_ex_fused = self.fuselayer(out1, out1_ex)
-
-        ffn_output = self.dropout2(out1_fused, training=training)
+        ffn_output = self.ffn_x(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
         out2 = self.layernorm2(out1 + ffn_output)
 
-        ffn_output_ex = self.dropout2_ex(out1_ex_fused, training=training)
-        out2_ex = self.layernorm2_ex(out1_ex + ffn_output_ex)
-
-        return out2, out2_ex
+        return out2
 
 
 class DecoderLayer(layers.Layer):
-    def __init__(self, d_model, num_heads, dff, rate=0.1):
+    def __init__(self, d_model, num_heads, dff, rate=0.1, conv_embedding=False):
         super(DecoderLayer, self).__init__()
 
-        self.mha1 = MultiHeadAttention(d_model, num_heads)
-        self.mha2 = MultiHeadAttention(d_model, num_heads)
+        self.conv_embedding = conv_embedding
+
+        if not conv_embedding:
+            self.mha1 = MultiHeadAttention(d_model, num_heads)
+            self.mha2 = MultiHeadAttention(d_model, num_heads)
+        else:
+            self.mha1 = MultiHeadAttention_3D(d_model, num_heads)
+            self.mha2 = MultiHeadAttention_3D(d_model, num_heads)
 
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
@@ -230,58 +279,76 @@ class DecoderLayer(layers.Layer):
         self.dropout2 = layers.Dropout(rate)
         self.dropout3 = layers.Dropout(rate)
 
-        self.mha1_ex = MultiHeadAttention(d_model, num_heads)
-        self.mha2_ex = MultiHeadAttention(d_model, num_heads)
+        self.ffn_x = point_wise_feed_forward_network(d_model, dff)
 
-        self.layernorm1_ex = layers.LayerNormalization(epsilon=1e-6)
-        self.layernorm2_ex = layers.LayerNormalization(epsilon=1e-6)
-        self.layernorm3_ex = layers.LayerNormalization(epsilon=1e-6)
-
-        self.dropout1_ex = layers.Dropout(rate)
-        self.dropout2_ex = layers.Dropout(rate)
-        self.dropout3_ex = tf.keras.layers.Dropout(rate)
-
-        self.fuselayer = FuseLayer(d_model)
-        self.fuselayer_ff = FuseLayer_FF(d_model, dff=dff)
-
-    def call(self, flow, ex, enc_output_flow, enc_output_ex, training,
-             look_ahead_mask, padding_mask):
-        attn1, attn_weights_block1 = self.mha1(flow, flow, flow,
-                                               look_ahead_mask)
+    def call(self, x, ex, enc_output_x, training, look_ahead_mask, padding_mask, ex_flag=False):
+        if not self.conv_embedding:
+            attn1, _ = self.mha1(x, ex, ex, look_ahead_mask)
+        else:
+            attn1, _ = self.mha1(x, ex, ex, look_ahead_mask, ex_flag)
         attn1 = self.dropout1(attn1, training=training)
-        out1 = self.layernorm1(attn1 + flow)
+        out1 = self.layernorm1(attn1 + x)
 
-        attn1_ex, attn_weights_block1_ex = self.mha1_ex(ex, ex, ex,
-                                                        look_ahead_mask)
-        attn1_ex = self.dropout1_ex(attn1_ex, training=training)
-        out1_ex = self.layernorm1_ex(attn1_ex + ex)
-
-        out1_fused, out1_ex_fused = self.fuselayer(out1, out1_ex)
-
-        attn2, attn_weights_block2 = self.mha2(
-            enc_output_flow, enc_output_flow, out1_fused, padding_mask)
+        if not self.conv_embedding:
+            attn2, _ = self.mha2(enc_output_x, enc_output_x, out1, padding_mask)
+        else:
+            attn2, _ = self.mha2(enc_output_x, enc_output_x, out1, padding_mask, False)
         attn2 = self.dropout2(attn2, training=training)
         out2 = self.layernorm2(attn2 + out1)
 
-        attn2_ex, attn_weights_block2_ex = self.mha2_ex(
-            enc_output_ex, enc_output_ex, out1_ex_fused, padding_mask)
-        attn2_ex = self.dropout2(attn2_ex, training=training)
-        out2_ex = self.layernorm2_ex(attn2_ex + out1_ex)
-
-        out2_fused, out2_ex_fused = self.fuselayer_ff(out2, out2_ex)
-
-        ffn_output = self.dropout3(out2_fused, training=training)
+        ffn_output = self.ffn_x(out2)
+        ffn_output = self.dropout3(ffn_output, training=training)
         out3 = self.layernorm3(ffn_output + out2)
 
-        ffn_output_ex = self.dropout3_ex(out2_ex_fused, training=training)
-        out3_ex = self.layernorm3_ex(ffn_output_ex + out2)
+        return out3
 
-        return out3, out3_ex, attn_weights_block1, attn_weights_block2, attn_weights_block1_ex, attn_weights_block2_ex
+class DecoderFuseLayer(layers.Layer):
+    def __init__(self, d_model, num_heads, dff, rate=0.1, conv_embedding=False):
+        super(DecoderFuseLayer, self).__init__()
+
+        self.conv_embedding = conv_embedding
+
+        self.mha0 = MultiHeadAttention(65, 1)
+        if not conv_embedding:
+            self.mha1 = MultiHeadAttention(d_model, num_heads)
+        else:
+            self.mha1 = MultiHeadAttention_3D(d_model, num_heads)
+
+        self.layernorm0 = layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
+
+        self.dropout0 = layers.Dropout(rate)
+        self.dropout1 = layers.Dropout(rate)
+        self.dropout2 = layers.Dropout(rate)
+
+        self.ffn_x = point_wise_feed_forward_network(d_model, dff)
+
+    def call(self, ex, enc_output_x, enc_output_ex, training, look_ahead_mask, padding_mask, ex_flag=False):
+        attn0, _ = self.mha0(ex, ex, ex, look_ahead_mask)
+        attn0 = self.dropout0(attn0, training=training)
+        out0 = self.layernorm0(attn0 + ex)
+
+        if not self.conv_embedding:
+            attn1, _ = self.mha1(enc_output_x, enc_output_ex, out0, padding_mask)
+        else:
+            attn1, _ = self.mha1(enc_output_x, enc_output_ex, out0, padding_mask, ex_flag)
+        attn1 = self.dropout1(attn1, training=training)
+        out1 = self.layernorm1(attn1)
+
+        ffn_output = self.ffn_x(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
+        out2 = self.layernorm2(ffn_output + out1)
+
+        return out2
 
 
-class Encoder(tf.keras.layers.Layer):
-    def __init__(self, num_layers, d_model, num_heads, dff, dff_ex, total_slot=4320, rate=0.1, conv_embedding=False):
+class Encoder(layers.Layer):
+    def __init__(self, num_layers, d_model, num_heads, dff, dff_ex, seq_len=199, total_slot=4320, rate=0.1,
+                 conv_embedding=False, conv_layers=3):
         super(Encoder, self).__init__()
+
+        self.conv_embedding = conv_embedding
 
         self.d_model = d_model
         self.num_layers = num_layers
@@ -289,41 +356,49 @@ class Encoder(tf.keras.layers.Layer):
         if not conv_embedding:
             self.embedding_flow = FeedForwardEmbedding(d_model, dff, rate)
         else:
-            self.embedding_flow = ConvEmbedding(d_model, rate)
-        self.embedding_ex = FeedForwardEmbedding(d_model, dff_ex, rate)
-        self.pos_encoding = positional_encoding(total_slot, self.d_model)
+            self.embedding_flow = ConvolutionalEmbedding(d_model, seq_len, conv_layers, rate)
 
-        self.enc_layers = [EncoderLayer(d_model, num_heads, dff, rate)
+        self.pos_encoding = positional_encoding(total_slot, self.d_model)
+        self.pos_encoding_ex = positional_encoding(total_slot, 65)
+
+        self.enc_layers = [EncoderLayer(d_model, num_heads, dff, rate, conv_embedding=conv_embedding)
                            for _ in range(num_layers)]
 
-        # self.dropout_flow = layers.Dropout(rate)
-        # self.dropout_ex = layers.Dropout(rate)
+        self.enc_layers_ex = [EncoderLayer(d_model, num_heads, dff, rate, conv_embedding=conv_embedding)
+                              for _ in range(num_layers)]
 
-    def call(self, hist_flow, hist_ex, curr_flow, curr_ex, training, mask):
-        flow = tf.concat([hist_flow, curr_flow], axis=1)
-        ex = tf.concat([hist_ex, curr_ex], axis=1)
-        flow = self.embedding_flow(flow, training)
-        ex = self.embedding_ex(ex, training)
+    def call(self, flow, ex, training, mask):
+        seq_len = tf.shape(flow)[-2]
+
+        flow = self.embedding_flow(flow, training=training)
         flow *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
-        ex *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
-
-        seq_len = tf.shape(flow)[1]
-
-        ex += self.pos_encoding[:, :seq_len, :]
         flow += self.pos_encoding[:, :seq_len, :]
 
-        # flow = self.dropout_flow(flow, training=training)
-        # ex = self.dropout_ex(ex, training=training)
+        ex *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+        ex += self.pos_encoding_ex[:, :seq_len, :]
 
         for i in range(self.num_layers):
-            flow, ex = self.enc_layers[i](flow, ex, training, mask)
+            if i == 0:
+                if self.conv_embedding:
+                    flow_ex = self.enc_layers_ex[i](flow, ex, training, mask, ex_flag=True)
+                else:
+                    flow_ex = self.enc_layers_ex[i](flow, ex, training, mask)
+            else:
+                if self.conv_embedding:
+                    flow_ex = self.enc_layers_ex[i](flow_ex, ex, training, mask, ex_flag=True)
+                else:
+                    flow_ex = self.enc_layers_ex[i](flow_ex, ex, training, mask)
+            flow = self.enc_layers[i](flow, flow, training, mask)
 
-        return flow, ex
+        return flow, flow_ex, ex
 
 
 class Decoder(layers.Layer):
-    def __init__(self, num_layers, d_model, num_heads, dff, dff_ex, total_slot=4320, rate=0.1, conv_embedding=False):
+    def __init__(self, num_layers, d_model, num_heads, dff, dff_ex, seq_len=12, total_slot=4320, rate=0.1,
+                 conv_embedding=False, conv_layers=3):
         super(Decoder, self).__init__()
+
+        self.conv_embedding = conv_embedding
 
         self.d_model = d_model
         self.num_layers = num_layers
@@ -331,64 +406,94 @@ class Decoder(layers.Layer):
         if not conv_embedding:
             self.embedding_flow = FeedForwardEmbedding(d_model, dff, rate)
         else:
-            self.embedding_flow = ConvEmbedding(d_model, rate)
-        self.embedding_ex = FeedForwardEmbedding(d_model, dff_ex, rate)
+            self.embedding_flow = ConvolutionalEmbedding(d_model, seq_len, conv_layers, rate)
+
         self.pos_encoding = positional_encoding(total_slot, self.d_model)
+        self.pos_encoding_ex = positional_encoding(total_slot, 65)
 
-        self.dec_layers = [DecoderLayer(d_model, num_heads, dff, rate)
+        self.dec_layers = [DecoderLayer(d_model, num_heads, dff, rate, conv_embedding=conv_embedding)
                            for _ in range(num_layers)]
-        # self.dropout_flow = layers.Dropout(rate)
-        # self.dropout_ex = layers.Dropout(rate)
+        self.dec_layers_ex = [DecoderLayer(d_model, num_heads, dff, rate, conv_embedding=conv_embedding)
+                              for _ in range(num_layers - 1)]
+        self.dec_fuse_layer = DecoderFuseLayer(d_model, num_heads, dff, rate, conv_embedding=conv_embedding)
 
-    def call(self, flow, ex, enc_output_flow, enc_output_ex, training,
-             look_ahead_mask, padding_mask):
-        seq_len = tf.shape(flow)[1]
-        attention_weights = {}
+    def call(self, flow, ex, enc_output_flow, enc_output_flow_ex, enc_output_ex, training,
+             look_ahead_mask, padding_mask, tar_size=None):
+        seq_len = tf.shape(flow)[-2]
 
-        flow = self.embedding_flow(flow, training)
-        ex = self.embedding_ex(ex, training)
+        if self.conv_embedding:
+            flow = self.embedding_flow(flow, training=training, tar_size=tar_size)
+        else:
+            flow = self.embedding_flow(flow, training=training)
         flow *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
-        ex *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
         flow += self.pos_encoding[:, :seq_len, :]
-        ex += self.pos_encoding[:, :seq_len, :]
 
-        # flow = self.dropout_flow(flow, training=training)
-        # ex = self.dropout_ex(ex, training=training)
+        ex *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+        ex *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+        ex += self.pos_encoding_ex[:, :seq_len, :]
 
         for i in range(self.num_layers):
-            flow, ex, block1, block2, block1_ex, block2_ex = self.dec_layers[i](flow, ex, enc_output_flow,
-                                                                                enc_output_ex, training,
-                                                                                look_ahead_mask, padding_mask)
+            if i == 0:
+                if self.conv_embedding:
+                    flow_ex = self.dec_fuse_layer(ex, enc_output_flow_ex, enc_output_ex, training, look_ahead_mask, padding_mask,
+                                                  ex_flag=True)
+                else:
+                    flow_ex = self.dec_fuse_layer(ex, enc_output_flow_ex, enc_output_ex, training, look_ahead_mask, padding_mask)
+            else:
+                if self.conv_embedding:
+                    flow_ex = self.dec_layers_ex[i - 1](flow_ex, flow_ex, enc_output_flow_ex, training, look_ahead_mask, padding_mask)
+                else:
+                    flow_ex = self.dec_layers_ex[i - 1](flow_ex, flow_ex, enc_output_flow_ex, training, look_ahead_mask, padding_mask)
+            flow = self.dec_layers[i](flow, flow, enc_output_flow, training, look_ahead_mask, padding_mask)
 
-            attention_weights['decoder_layer{}_block1'.format(i + 1)] = block1
-            attention_weights['decoder_layer{}_block2'.format(i + 1)] = block2
-            attention_weights['decoder_layer{}_block1_ex'.format(i + 1)] = block1_ex
-            attention_weights['decoder_layer{}_block2_ex'.format(i + 1)] = block2_ex
+        return flow, flow_ex
 
-        return flow, ex, attention_weights
+CONCAT_or_SUM = 0
 
+class Transformer_Ex(Model):
+    def __init__(self, num_layers, d_model, num_heads, dff, output_size, seq_len=187, seq_len_tar=12, dff_ex=128, total_slot=4320,
+                 rate=0.1,
+                 conv_embedding=False, conv_layers=3):
+        super(Transformer_Ex, self).__init__()
 
-class AMEX(tf.keras.Model):
-    def __init__(self, num_layers, d_model, num_heads, dff, output_size, dff_ex=16, total_slot=4320, rate=0.1,
-                 conv_embedding=False):
-        super(AMEX, self).__init__()
+        self.conv_embedding = conv_embedding
 
-        self.encoder = Encoder(num_layers, d_model, num_heads, dff, dff_ex, total_slot, rate, conv_embedding)
+        self.encoder = Encoder(num_layers, d_model, num_heads, dff, dff_ex, seq_len, total_slot, rate, conv_embedding, conv_layers)
 
-        self.decoder = Decoder(num_layers, d_model, num_heads, dff, dff_ex, total_slot, rate, conv_embedding)
+        self.decoder = Decoder(num_layers, d_model, num_heads, dff, dff_ex, seq_len_tar, total_slot, rate, conv_embedding, conv_layers)
 
-        self.final_layer = layers.Dense(output_size)
+        self.dense = layers.Dense(dff)
 
-    def call(self, hist_flow, hist_ex, curr_flow, curr_ex, next_exs, tar, training, enc_padding_mask=None, look_ahead_mask=None,
-             dec_padding_mask=None):
-        enc_output_flow, enc_output_ex = self.encoder(hist_flow, hist_ex, curr_flow, curr_ex, training,
+        if not conv_embedding:
+            self.final_layer = layers.Dense(output_size)
+        else:
+            self.final_layer = layers.Dense(2)
+
+    def call(self, hist_flow, hist_ex, curr_flow, curr_ex, next_exs, tar, training, enc_padding_mask=None,
+             look_ahead_mask=None,
+             dec_padding_mask=None,
+             tar_size=None):
+        if not self.conv_embedding:
+            flow = tf.concat([hist_flow, curr_flow], axis=1)
+            ex = tf.concat([hist_ex, curr_ex], axis=1)
+        else:
+            flow = hist_flow
+            ex = hist_ex
+
+        enc_output_flow, enc_output_flow_ex, enc_output_ex = self.encoder(flow, ex, training,
                                                       enc_padding_mask)
 
-        dec_output_flow, dec_output_ex, attention_weights = self.decoder(
-            tar, next_exs, enc_output_flow, enc_output_ex, training, look_ahead_mask, dec_padding_mask)
+        dec_output_flow, dec_output_ex = self.decoder(
+            tar, next_exs, enc_output_flow, enc_output_flow_ex, enc_output_ex, training, look_ahead_mask, dec_padding_mask, tar_size)
 
-        dec_output = tf.concat([dec_output_flow, dec_output_ex], axis=2)
 
-        final_output = self.final_layer(dec_output)
+        if not CONCAT_or_SUM:
+            dec_output = tf.concat([dec_output_flow, dec_output_ex], axis=-1)
+        else:
+            dec_output = dec_output_flow + dec_output_ex
 
-        return final_output, attention_weights
+        output_1 = gelu(self.dense(dec_output))
+
+        final_output = self.final_layer(output_1)
+
+        return final_output

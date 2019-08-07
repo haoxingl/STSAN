@@ -1,0 +1,16 @@
+Unzip data.zip into this folder first.
+
+main.py calculate the scores of the belowing baselines:
+Historical Average
+ARIMA
+VAR
+MLP
+LSTM
+GRU
+
+The 3 deep learning models need to be configured following their authers' instructions:
+ST-ResNet: https://github.com/lucktroy/DeepST
+DMVST-Net: https://github.com/huaxiuyao/DMVST-Net
+STDN: https://github.com/tangxianfeng/STDN
+
+We also modify the data we used according to format of STDN. STDN.zip contains the data and codes with updated parameters. You can also download the source code and update the parameters then.
