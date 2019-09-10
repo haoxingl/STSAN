@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 
+""" convert external knowledge to feature matrices """
+
 class ex_knlg_processor:
     def __init__(self, dataset='taxi'):
         self.dataset = dataset

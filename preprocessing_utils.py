@@ -3,6 +3,7 @@ from datetime import datetime as dt
 from datetime import timedelta
 import numpy as np
 
+""" generate training and testing data from original trajectories records """
 
 class preprocessing_utils:
     def __init__(self):

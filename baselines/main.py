@@ -1,6 +1,3 @@
-import sys
-sys.path.append("..")
-
 import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -130,7 +127,7 @@ def var(flow, target):
     return in_rmse, out_rmse, in_mae, out_mae
 
 
-def MLP(x_train, y_train, x_test, y_test):
+def mlp(x_train, y_train, x_test, y_test):
     half_size = int(x_train.shape[2] *  x_train.shape[1] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
@@ -242,7 +239,7 @@ if __name__ == "__main__":
         try:
             start = time.time()
             print("Calculating MLP RMSE, MAE results...")
-            in_rmse, out_rmse, in_mae, out_mae = MLP(original_train, ys_train, original_test, ys_test)
+            in_rmse, out_rmse, in_mae, out_mae = mlp(original_train, ys_train, original_test, ys_test)
             print("MLP: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
                   .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max,
                           in_mae * param.flow_train_max, out_mae * param.flow_train_max))

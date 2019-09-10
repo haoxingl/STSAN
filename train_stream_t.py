@@ -32,27 +32,22 @@ arg_parser.add_argument('--dataset', type=str, default='taxi', help='default is 
 
 args = arg_parser.parse_args()
 
-model_index = '38'
-
 
 def main():
     if args.dataset == 'taxi':
         flow_max = parameters_nyctaxi.flow_train_max
-        total_slot = int(parameters_nyctaxi.time_interval_total)
     elif args.dataset == 'bike':
         flow_max = parameters_nycbike.flow_train_max
-        total_slot = int(parameters_nycbike.time_interval_total)
     else:
         raise Exception("Dataset should be taxi or bike")
 
     direct_test = False
 
     """ Model hyperparameters """
-    num_layers = 4  # 4
-    d_model = 64  # 128
-    dff = 128  # 512
-    # d_final = 256
-    num_heads = 8  # 4
+    num_layers = 4
+    d_model = 64
+    dff = 128
+    num_heads = 8
     dropout_rate = 0.1
     cnn_layers = 3
     cnn_filters = 64
@@ -80,7 +75,6 @@ def main():
     num_intervals_hist = 3
     num_intervals_currday = 1
     num_intervals_before_predict = 1
-    # num_intervals_enc = num_days_hist*num_intervals_hist + num_intervals_currday
     local_block_len = 3
     print("num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_currday: {}, num_intervals_before_predict: {}" \
           .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_currday, num_intervals_before_predict))
@@ -89,6 +83,7 @@ def main():
         with open("results/stream_t.txt", 'a+') as file:
             file.write(str)
 
+    """ use mirrored strategy for distributed training """
     strategy = tf.distribute.MirroredStrategy()
     print('Number of GPU devices: {}'.format(strategy.num_replicas_in_sync))
 
@@ -203,6 +198,7 @@ def main():
 
             predictions, _ = stream_t(x_hist, ex_hist, x_currday, ex_currday, training=False)
 
+            """ here we filter out all nodes where their real flows are less than 10 """
             real_in = ys_transitions[:, :, :, 0]
             real_out = ys_transitions[:, :, :, 1]
             pred_in = predictions[:, :, :, 0]

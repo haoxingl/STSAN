@@ -36,10 +36,8 @@ args = arg_parser.parse_args()
 def main():
     if args.dataset == 'taxi':
         flow_max = parameters_nyctaxi.flow_train_max
-        total_slot = int(parameters_nyctaxi.time_interval_total)
     elif args.dataset == 'bike':
         flow_max = parameters_nycbike.flow_train_max
-        total_slot = int(parameters_nycbike.time_interval_total)
     else:
         raise Exception("Dataset should be taxi or bike")
 
@@ -229,6 +227,7 @@ def main():
             predictions, _ = st_san(flow_hist, trans_hist, ex_hist, flow_currday, trans_currday, ex_currday,
                                     training=False)
 
+            """ here we filter out all nodes where their real flows are less than 10 """
             real_in = ys[:, 0]
             real_out = ys[:, 1]
             pred_in = predictions[:, 0]

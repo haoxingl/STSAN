@@ -3,8 +3,6 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 
 import data_loader as dl
-import numpy as np
-import matplotlib.pyplot as plt
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -133,69 +131,3 @@ class early_stop_helper():
 
     def get_bestepoch(self):
         return self.best_epoch
-
-
-def plot_s_attn(trans_mtx):
-    fig = plt.figure(figsize=(8, 4))
-
-    trans_mtx = tf.squeeze(trans_mtx[:1, :, :, :], axis=0)
-    trans_mtx_in = tf.reduce_mean(trans_mtx[:, :, :2], axis=-1)
-    trans_mtx_out = tf.reduce_mean(trans_mtx[:, :, 2:], axis=-1)
-    trans_mtx = [trans_mtx_in, trans_mtx_out]
-
-    for slice in range(2):
-        ax = fig.add_subplot(1, 2, slice + 1)
-
-        ax.matshow(trans_mtx[slice], cmap='viridis')
-
-        if slice == 0:
-            ax.set_xlabel('spatial attention: inflow', fontdict={'fontsize': 16})
-        else:
-            ax.set_xlabel('spatial attention: outflow', fontdict={'fontsize': 16})
-
-    plt.tight_layout()
-    plt.savefig('figures/spatial_attn.png')
-
-
-def plot_t_attn(attention, layer):
-    fig = plt.figure(figsize=(4, 3))
-
-    attention = tf.reduce_mean(attention[layer][:1, :, :, :, :, :], axis=1)
-    attention = tf.reduce_mean(attention, axis=1)
-    attention = tf.reduce_mean(attention, axis=1)
-
-    ax = fig.add_subplot(1, 1, 1)
-
-    ax.matshow(attention[0][:, :], cmap='viridis')
-
-    fontdict = {'fontsize': 10}
-
-    ax.set_xticks(range(22))
-    ax.set_yticks(range(1))
-
-    ax.set_ylim(0.5, -0.5)
-
-    ls = [['day {} - slot {}'.format(j - 7, i) for i in range(3)] for j in range(7)]
-    labels = []
-
-    for l in ls:
-        labels += l
-
-    labels += ['curr day slot -1']
-
-    ax.set_xticklabels(
-        labels,
-        fontdict=fontdict, rotation=90)
-
-    # ax.set_yticklabels(['attention'],
-    #                    fontdict={'fontsize': 10})
-
-    ax.set_xlabel('temporal attention')
-
-    plt.savefig('figures/temporal_attn.png')
-
-
-if __name__ == "__main__":
-    a, b, c = load_dataset(dataset='taxi', load_saved_data=False, batch_size=64, num_weeks_hist=0, num_days_hist=7,
-                           num_intervals_hist=3, num_intervals_currday=1, num_intervals_before_predict=1,
-                           local_block_len=3)

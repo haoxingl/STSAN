@@ -91,7 +91,7 @@ def scaled_dot_product_attention(q, k, v, mask):
     return output, attention_weights
 
 
-""" the implementation of Spatial Temporal Self-Attention Mechanism, detailed in my paper"""
+""" the implementation of Spatial-Temporal Multi-Head Attention, detailed in my paper"""
 class SpatialTemporal_MultiHeadAttention(layers.Layer):
     def __init__(self, d_model, num_heads):
         super(SpatialTemporal_MultiHeadAttention, self).__init__()
@@ -328,7 +328,6 @@ class ST_SAN(tf.keras.Model):
 
         self.trans_encoder = stream_t.get_layer('Encoder')
         self.trans_decoder = stream_t.get_layer('Decoder')
-
 
         self.trans_encoder.trainable = False
         self.trans_decoder.trainable = False
