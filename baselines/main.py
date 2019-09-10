@@ -1,3 +1,12 @@
+import sys
+sys.path.append("..")
+
+import os
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import numpy as np
 import time
 import data_loader as dl
@@ -6,45 +15,43 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.vector_ar.var_model import VAR
 import tensorflow as tf
 from tensorflow.keras import layers, models
-import parameters_nyctaxi
-import parameters_nycbike
+import parameters_nyctaxi as param_taxi
+import parameters_nycbike as param_bike
 
-import os
-
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+  try:
+    for gpu in gpus:
+      tf.config.experimental.set_memory_growth(gpu, True)
+    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+  except RuntimeError as e:
+    print(e)
 
 dataset = 'taxi'
 verbose = 0
-use_all_data = True     # True if want to use the 25 sequences of all 7 previous days,
-                        # Flase to use only the data of previous 12 sequences in current day.
+num_slots_curr = 12
+output_size = 2
+
+saved_data = False
 
 if dataset == 'taxi':
     d_loader = dl.data_loader(dataset)
-    output_size = parameters_nyctaxi.output_size
-    mask_threshold = 10 / parameters_nyctaxi.flow_train_max
+    mask_threshold = 10 / param_taxi.flow_train_max
+    param = param_taxi
 elif dataset == 'bike':
     d_loader = dl.data_loader(dataset)
-    output_size = parameters_nycbike.output_size
-    mask_threshold = 10 / parameters_nycbike.flow_train_max
+    mask_threshold = 10 / param_bike.flow_train_max
+    param = param_bike
 
-hist_flow_train, _, curr_flow_train, _, _, targets_train \
-    = d_loader.generate_data()
+_, _, _, flow_inputs_currday_train, _, _, _, ys_train \
+    = d_loader.generate_data('train', 0, 1, 1, num_slots_curr - 1, 0, 3, saved_data)
 
-hist_flow_test, _, curr_flow_test, _, _, targets_test \
-    = d_loader.generate_data(datatype='test')
+_, _, _, flow_inputs_currday_test, _, _, _, ys_test \
+    = d_loader.generate_data('test', 0, 1, 1, num_slots_curr - 1, 0, 3, saved_data)
 
-flow_train = np.concatenate([hist_flow_train, curr_flow_train], axis=1)
-
-flow_test = np.concatenate([hist_flow_test, curr_flow_test], axis=1)
-
-if use_all_data:
-    original_train = flow_train
-    original_test = flow_test
-else:
-    original_train = curr_flow_train
-    original_test = curr_flow_test
+original_train = flow_inputs_currday_train[:, 3, 3, :, :]
+original_test = flow_inputs_currday_test[:, 3, 3, :, :]
 
 
 class CustomStopper(tf.keras.callbacks.EarlyStopping):
@@ -58,79 +65,81 @@ class CustomStopper(tf.keras.callbacks.EarlyStopping):
 
 
 def historical_average(flow, target):
-    half_size = int(flow.shape[2] / 2)
-    mask = np.greater(target, mask_threshold)
-    mask.astype(np.float32)
-    target *= mask
-    averaged_sum = np.squeeze(np.mean(flow, axis=1)) * mask
-    in_rmse = np.sqrt(np.mean(np.square(target[:, :half_size] - averaged_sum[:, :half_size])))
-    out_rmse = np.sqrt(np.mean(np.square(target[:, half_size:] - averaged_sum[:, half_size:])))
-    in_mae = np.mean(np.abs(target[:, :half_size] - averaged_sum[:, :half_size]))
-    out_mae = np.mean(np.abs(target[:, half_size:] - averaged_sum[:, half_size:]))
+    in_mask = np.greater(target[:, 0], mask_threshold)
+    out_mask = np.greater(target[:, 1], mask_threshold)
+    averaged_sum = np.squeeze(np.mean(flow, axis=-2))
+    in_rmse = np.sqrt(np.mean(np.square(target[:, 0][in_mask] - averaged_sum[:, 0][in_mask])))
+    out_rmse = np.sqrt(np.mean(np.square(target[:, 1][out_mask] - averaged_sum[:, 1][out_mask])))
+    in_mae = np.mean(np.abs(target[:, 0][in_mask] - averaged_sum[:, 0][in_mask]))
+    out_mae = np.mean(np.abs(target[:, 1][out_mask] - averaged_sum[:, 1][out_mask]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def arima(flow, target):
     warnings.filterwarnings("ignore")
-    half_size = int(flow.shape[2] / 2)
-    mask = np.greater(target, mask_threshold)
-    mask.astype(np.float32)
-    target *= mask
-    result = np.zeros((flow.shape[0], flow.shape[2]))
+    in_mask = np.greater(target[:, 0], mask_threshold)
+    out_mask = np.greater(target[:, 1], mask_threshold)
+    result = np.zeros((flow.shape[0], flow.shape[-1]))
     for i in range(flow.shape[0]):
         if verbose:
-            print("ARIMA: line {} of {}".format(i, flow.shape[0]))
-        for j in range(flow.shape[2]):
+            if (i + 1) % 10000 == 0:
+                print("ARIMA: line {} of {}".format(i + 1, flow.shape[0]))
+        for j in range(flow.shape[-1]):
             data = (flow[i, :, j]).tolist()
-            model = SARIMAX(data,
-                            order=(1, 1, 0),
-                            enforce_stationarity=False,
-                            enforce_invertibility=False)
-            model_fit = model.fit(disp=False)
-            result[i, j] = model_fit.predict(len(data), len(data))[0]
-    result *= mask
-    in_rmse = np.sqrt(np.mean(np.square(target[:, :half_size] - result[:, :half_size])))
-    out_rmse = np.sqrt(np.mean(np.square(target[:, half_size:] - result[:, half_size:])))
-    in_mae = np.mean(np.abs(target[:, :half_size] - result[:, :half_size]))
-    out_mae = np.mean(np.abs(target[:, half_size:] - result[:, half_size:]))
+            try:
+                model = SARIMAX(data,
+                                order=(1, 1, 0),
+                                enforce_stationarity=False,
+                                enforce_invertibility=False)
+                model_fit = model.fit(disp=False)
+                result[i, j] = model_fit.predict(len(data), len(data))[0]
+            except:
+                result[i, j] = 0.0
+                pass
+    in_rmse = np.sqrt(np.mean(np.square(target[:, 0][in_mask] - result[:, 0][in_mask])))
+    out_rmse = np.sqrt(np.mean(np.square(target[:, 1][out_mask] - result[:, 1][out_mask])))
+    in_mae = np.mean(np.abs(target[:, 0][in_mask] - result[:, 0][in_mask]))
+    out_mae = np.mean(np.abs(target[:, 1][out_mask] - result[:, 1][out_mask]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def var(flow, target):
-    warnings.filterwarnings("ignore")  # specify to ignore warning messages
-    half_size = int(flow.shape[2] / 2)
-    mask = np.greater(target, mask_threshold)
-    mask.astype(np.float32)
-    target *= mask
-    result = np.zeros((flow.shape[0], flow.shape[2]))
+    warnings.filterwarnings("ignore")
+    in_mask = np.greater(target[:, 0], mask_threshold)
+    out_mask = np.greater(target[:, 1], mask_threshold)
+    result = np.zeros((flow.shape[0], flow.shape[-1]))
     for i in range(flow.shape[0]):
         if verbose:
-            print("VAR: line {} of {}".format(i, flow.shape[0]))
-        for j in range(flow.shape[2]):
+            if (i + 1) % 10000 == 0:
+                print("VAR: line {} of {}".format(i + 1, flow.shape[0]))
+        for j in range(flow.shape[-1]):
             data = list()
             for k in range(flow.shape[1] - 1):
                 data.append([flow[i, k, j], flow[i, k + 1, j]])
             model = VAR(data)
-            model_fit = model.fit()
-            result[i, j] = model_fit.forecast(model_fit.y, steps=1)[0][1]
-    result *= mask
-    in_rmse = np.sqrt(np.mean(np.square(target[:, :half_size] - result[:, :half_size])))
-    out_rmse = np.sqrt(np.mean(np.square(target[:, half_size:] - result[:, half_size:])))
-    in_mae = np.mean(np.abs(target[:, :half_size] - result[:, :half_size]))
-    out_mae = np.mean(np.abs(target[:, half_size:] - result[:, half_size:]))
+            try:
+                model_fit = model.fit()
+                result[i, j] = model_fit.forecast(model_fit.y, steps=1)[0][1]
+            except:
+                result[i, j] = 0.0
+                pass
+    in_rmse = np.sqrt(np.mean(np.square(target[:, 0][in_mask] - result[:, 0][in_mask])))
+    out_rmse = np.sqrt(np.mean(np.square(target[:, 1][out_mask] - result[:, 1][out_mask])))
+    in_mae = np.mean(np.abs(target[:, 0][in_mask] - result[:, 0][in_mask]))
+    out_mae = np.mean(np.abs(target[:, 1][out_mask] - result[:, 1][out_mask]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def MLP(x_train, y_train, x_test, y_test):
-    half_size = int(x_train.shape[2] / 2)
+    half_size = int(x_train.shape[2] *  x_train.shape[1] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(
         [
             layers.Flatten(),
-            layers.Dense(2*output_size, activation='relu'),
-            layers.Dense(2*output_size, activation='relu'),
-            layers.Dense(output_size)
+            layers.Dense(half_size, activation='relu'),
+            layers.Dense(half_size, activation='relu'),
+            layers.Dense(output_size, activation='tanh')
         ]
     )
 
@@ -142,25 +151,22 @@ def MLP(x_train, y_train, x_test, y_test):
 
     y_pred = model.predict(x_test)
 
-    mask = np.greater(y_test, mask_threshold)
-    mask.astype(np.float32)
-    y_test *= mask
-    y_pred *= mask
-    in_rmse = np.sqrt(np.mean(np.square(y_test[:, :half_size] - y_pred[:, :half_size])))
-    out_rmse = np.sqrt(np.mean(np.square(y_test[:, half_size:] - y_pred[:, half_size:])))
-    in_mae = np.mean(np.abs(y_test[:, :half_size] - y_pred[:, :half_size]))
-    out_mae = np.mean(np.abs(y_test[:, half_size:] - y_pred[:, half_size:]))
+    in_mask = np.greater(y_test[:, 0], mask_threshold)
+    out_mask = np.greater(y_test[:, 1], mask_threshold)
+    in_rmse = np.sqrt(np.mean(np.square(y_test[:, 0][in_mask] - y_pred[:, 0][in_mask])))
+    out_rmse = np.sqrt(np.mean(np.square(y_test[:, 1][out_mask] - y_pred[:, 1][out_mask])))
+    in_mae = np.mean(np.abs(y_test[:, 0][in_mask] - y_pred[:, 0][in_mask]))
+    out_mae = np.mean(np.abs(y_test[:, 1][out_mask] - y_pred[:, 1][out_mask]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def lstm(x_train, y_train, x_test, y_test):
-    half_size = int(x_train.shape[2] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(
         [
             tf.keras.layers.LSTM(64, recurrent_initializer='glorot_uniform'),
-            tf.keras.layers.Dense(output_size)
+            tf.keras.layers.Dense(output_size, activation='tanh')
         ]
     )
 
@@ -170,42 +176,24 @@ def lstm(x_train, y_train, x_test, y_test):
 
     model.fit(x_train, y_train, epochs=500, batch_size=64, validation_split=0.2, callbacks=[early_stop], verbose=verbose)
 
-    in_rmse = []
-    out_rmse = []
-    in_mae = []
-    out_mae = []
+    y_pred = model.predict(x_test)
 
-    for i in range(12):
-        y_pred = model.predict(x_test)
-        x_test = np.concatenate([x_test, np.expand_dims(y_pred, axis=1)], axis=1)
-        mask = np.greater(y_test[:, i, :], mask_threshold)
-        mask.astype(np.float32)
-        y_test[:, i, :] *= mask
-        y_pred *= mask
-
-        in_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, :half_size] - y_pred[:, :half_size]))))
-        out_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, half_size:] - y_pred[:, half_size:]))))
-        in_mae.append(np.mean(np.abs(y_test[:, i, :half_size] - y_pred[:, :half_size])))
-        out_mae.append(np.mean(np.abs(y_test[:, i, half_size:] - y_pred[:, half_size:])))
-
-    for i in range(12):
-        print('Slot {} INFLOW_RMSE {:.8f} OUTFLOW_RMSE {:.8f} INFLOW_MAE {:.8f} OUTFLOW_MAE {:.8f}'.format(
-            i + 1,
-            in_rmse[i],
-            out_rmse[i],
-            in_mae[i],
-            out_mae[i]))
+    in_mask = np.greater(y_test[:, 0], mask_threshold)
+    out_mask = np.greater(y_test[:, 1], mask_threshold)
+    in_rmse = np.sqrt(np.mean(np.square(y_test[:, 0][in_mask] - y_pred[:, 0][in_mask])))
+    out_rmse = np.sqrt(np.mean(np.square(y_test[:, 1][out_mask] - y_pred[:, 1][out_mask])))
+    in_mae = np.mean(np.abs(y_test[:, 0][in_mask] - y_pred[:, 0][in_mask]))
+    out_mae = np.mean(np.abs(y_test[:, 1][out_mask] - y_pred[:, 1][out_mask]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 def gru(x_train, y_train, x_test, y_test):
-    half_size = int(x_train.shape[2] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(
         [
             tf.keras.layers.GRU(64, recurrent_initializer='glorot_uniform'),
-            tf.keras.layers.Dense(output_size)
+            tf.keras.layers.Dense(output_size, activation='tanh')
         ]
     )
 
@@ -215,72 +203,65 @@ def gru(x_train, y_train, x_test, y_test):
 
     model.fit(x_train, y_train, epochs=500, batch_size=64, validation_split=0.2, callbacks=[early_stop], verbose=verbose)
 
-    in_rmse = []
-    out_rmse = []
-    in_mae = []
-    out_mae = []
+    y_pred = model.predict(x_test)
 
-    for i in range(12):
-        y_pred = model.predict(x_test)
-        x_test = np.concatenate([x_test, np.expand_dims(y_pred, axis=1)], axis=1)
-        mask = np.greater(y_test[:, i, :], mask_threshold)
-        mask.astype(np.float32)
-        y_test[:, i, :] *= mask
-        y_pred *= mask
-
-        in_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, :half_size] - y_pred[:, :half_size]))))
-        out_rmse.append(np.sqrt(np.mean(np.square(y_test[:, i, half_size:] - y_pred[:, half_size:]))))
-        in_mae.append(np.mean(np.abs(y_test[:, i, :half_size] - y_pred[:, :half_size])))
-        out_mae.append(np.mean(np.abs(y_test[:, i, half_size:] - y_pred[:, half_size:])))
-
-    for i in range(12):
-        print('Slot {} INFLOW_RMSE {:.8f} OUTFLOW_RMSE {:.8f} INFLOW_MAE {:.8f} OUTFLOW_MAE {:.8f}'.format(
-            i + 1,
-            in_rmse[i],
-            out_rmse[i],
-            in_mae[i],
-            out_mae[i]))
+    in_mask = np.greater(y_test[:, 0], mask_threshold)
+    out_mask = np.greater(y_test[:, 1], mask_threshold)
+    in_rmse = np.sqrt(np.mean(np.square(y_test[:, 0][in_mask] - y_pred[:, 0][in_mask])))
+    out_rmse = np.sqrt(np.mean(np.square(y_test[:, 1][out_mask] - y_pred[:, 1][out_mask])))
+    in_mae = np.mean(np.abs(y_test[:, 0][in_mask] - y_pred[:, 0][in_mask]))
+    out_mae = np.mean(np.abs(y_test[:, 1][out_mask] - y_pred[:, 1][out_mask]))
     return in_rmse, out_rmse, in_mae, out_mae
 
 
 if __name__ == "__main__":
-    for i in range(10):
+    for i in range(1):
         print("\nTest Round {}\n".format(i + 1))
 
         start = time.time()
         print("Calculating Historical Average RMSE, MAE results...")
-        in_rmse, out_rmse, in_mae, out_mae = historical_average(original_test, targets_test[:, 0, :])
+        in_rmse, out_rmse, in_mae, out_mae = historical_average(original_test, ys_test)
         print("Historical average: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-              .format(in_rmse, out_rmse, in_mae, out_mae))
+              .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max, in_mae * param.flow_train_max, out_mae * param.flow_train_max))
         print("Time used: {} seconds".format(time.time() - start))
 
         start = time.time()
         print("Calculating ARIMA RMSE, MAE results...")
-        in_rmse, out_rmse, in_mae, out_mae = arima(original_test, targets_test[:, 0, :])
+        in_rmse, out_rmse, in_mae, out_mae = arima(original_test, ys_test)
         print("ARIMA: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-              .format(in_rmse, out_rmse, in_mae, out_mae))
+              .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max, in_mae * param.flow_train_max, out_mae * param.flow_train_max))
         print("Time used: {} seconds".format(time.time() - start))
 
         start = time.time()
         print("Calculating VAR RMSE, MAE results...")
-        in_rmse, out_rmse, in_mae, out_mae = var(original_test, targets_test[:, 0, :])
+        in_rmse, out_rmse, in_mae, out_mae = var(original_test, ys_test)
         print("VAR: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-              .format(in_rmse, out_rmse, in_mae, out_mae))
+              .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max, in_mae * param.flow_train_max, out_mae * param.flow_train_max))
         print("Time used: {} seconds".format(time.time() - start))
 
-        start = time.time()
-        print("Calculating MLP RMSE, MAE results...")
-        in_rmse, out_rmse, in_mae, out_mae = MLP(flow_train, targets_train[:, 0, :], flow_test, targets_test[:, 0, :])
-        print("MLP: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
-              .format(in_rmse, out_rmse, in_mae, out_mae))
-        print("Time used: {} seconds".format(time.time() - start))
+        try:
+            start = time.time()
+            print("Calculating MLP RMSE, MAE results...")
+            in_rmse, out_rmse, in_mae, out_mae = MLP(original_train, ys_train, original_test, ys_test)
+            print("MLP: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+                  .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max,
+                          in_mae * param.flow_train_max, out_mae * param.flow_train_max))
+            print("Time used: {} seconds".format(time.time() - start))
 
-        start = time.time()
-        print("Calculating LSTM RMSE, MAE results...")
-        in_rmse, out_rmse, in_mae, out_mae = lstm(flow_train, targets_train[:, 0, :], flow_test, targets_test)
-        print("Time used: {} seconds".format(time.time() - start))
+            start = time.time()
+            print("Calculating LSTM RMSE, MAE results...")
+            in_rmse, out_rmse, in_mae, out_mae = lstm(original_train, ys_train, original_test, ys_test)
+            print("LSTM: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+                  .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max,
+                          in_mae * param.flow_train_max, out_mae * param.flow_train_max))
+            print("Time used: {} seconds".format(time.time() - start))
 
-        start = time.time()
-        print("Calculating GRU RMSE, MAE results...")
-        in_rmse, out_rmse, in_mae, out_mae = gru(flow_train, targets_train[:, 0, :], flow_test, targets_test)
-        print("Time used: {} seconds".format(time.time() - start))
+            start = time.time()
+            print("Calculating GRU RMSE, MAE results...")
+            in_rmse, out_rmse, in_mae, out_mae = gru(original_train, ys_train, original_test, ys_test)
+            print("GRU: IN_RMSE {}, OUT_RMSE {}, IN_MAE {}, OUT_MAE {}" \
+                  .format(in_rmse * param.flow_train_max, out_rmse * param.flow_train_max,
+                          in_mae * param.flow_train_max, out_mae * param.flow_train_max))
+            print("Time used: {} seconds".format(time.time() - start))
+        except:
+            pass

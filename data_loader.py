@@ -2,7 +2,6 @@ import numpy as np
 import parameters_nyctaxi as param_taxi
 import parameters_nycbike as param_bike
 
-# 这个是根据他们的改的
 
 class data_loader:
     def __init__(self, dataset='taxi'):
@@ -16,112 +15,274 @@ class data_loader:
             raise Exception
 
     def load_flow(self):
-        self.flow_train = np.load(self.parameters.flow_train)['flow'] / self.parameters.flow_train_max # 和他们的一样，读了数据后除以一个最大值来正则化
-        self.flow_val = np.load(self.parameters.flow_val)['flow'] / self.parameters.flow_train_max
+        self.flow_train = np.load(self.parameters.flow_train)['flow'] / self.parameters.flow_train_max
         self.flow_test = np.load(self.parameters.flow_test)['flow'] / self.parameters.flow_train_max
 
+    def load_trans(self):
+        self.trans_train = np.load(self.parameters.trans_train)['trans'] / self.parameters.trans_train_max
+        self.trans_test = np.load(self.parameters.trans_test)['trans'] / self.parameters.trans_train_max
+
+    """ external_knowledge contains the time and weather information of each time interval """
     def load_external_knowledge(self):
-        self.ex_knlg_train = np.load(self.parameters.external_knowledge_train)['external_knowledge']    # 外部信息，我加的，他们没有用任何外部信息
-        self.ex_knlg_val = np.load(self.parameters.external_knowledge_val)['external_knowledge']
-        self.ex_knlg_test = np.load(self.parameters.external_knowledge_test)['external_knowledge']
+        self.ex_knlg_data_train = np.load(self.parameters.external_knowledge_train)['external_knowledge']
+        self.ex_knlg_data_test = np.load(self.parameters.external_knowledge_test)['external_knowledge']
 
-    # 这一段大部分都是根据他们的逻辑改的，因为模型没他们复杂所以短了很多
-    def generate_data(self, datatype='train', predicted_weather=True, # 这个可以不用管
-                      conv_embedding=False, # 如果True就会输出原始的矩阵， 否则会将每个矩阵flat之后输出，flat之后每个向量前半部分是流入的值，后半部分是流出的值，True只在我的模型里用到，baselines皆为false
-                      target_size=13, # 需要预测未来多少个时间段
-                      hist_day_num=7,   # 参考过去多少天的数据
-                      hist_day_seq_len=25, # 每天参考多少个时间点的数据
-                      curr_day_seq_len=12): # 当天参考多少个时间点的数据
+    def generate_data(self, datatype='train',
+                      num_weeks_hist=0,         # number previous weeks we generate the sample from.
+                      num_days_hist=7,          # number of the previous days we generate the sample from
+                      num_intervals_hist=3,         # number of intervals we sample in the previous weeks, days
+                      num_intervals_currday=1,         # number of intervals we sample in the current day
+                      num_intervals_before_predict=1,  # number of intervals before the interval to predict in each day, used to adjust the position of the sliding windows
+                      local_block_len_half=3,        # half of the length of local convolution block
+                      load_saved_data=False):   # loading the previous saved data
 
-        self.load_flow()
-        self.load_external_knowledge()
 
-        if hist_day_seq_len % 2 != 1:
-            print("Previous days attention seq len must be odd")
-            raise Exception
+        """ loading saved data """
+        if load_saved_data:
+            print('Loading data from .npz...')
+            flow_inputs_currday = np.load("data/flow_inputs_currday_{}_{}.npz".format(self.dataset, datatype))['data']
+            transition_inputs_currday = np.load("data/transition_inputs_currday_{}_{}.npz".format(self.dataset, datatype))['data']
+            ex_inputs_currday = np.load("data/ex_inputs_currday_{}_{}.npz".format(self.dataset, datatype))['data']
+            flow_inputs_hist = np.load("data/flow_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
+            transition_inputs_hist = np.load("data/transition_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
+            ex_inputs_hist = np.load("data/ex_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
+            ys = np.load("data/ys_{}_{}.npz".format(self.dataset, datatype))['data']
+            ys_transitions = np.load("data/ys_transitions_{}_{}.npz".format(self.dataset, datatype))['data']
 
-        # 选择数据集类型
-        if datatype == "train":
-            flow_data = self.flow_train
-            ex_knlg = self.ex_knlg_train
-        elif datatype == "val":
-            flow_data = self.flow_val
-            ex_knlg = self.ex_knlg_val
-        elif datatype == "test":
-            flow_data = self.flow_test
-            ex_knlg = self.ex_knlg_test
+            return flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_currday, transition_inputs_currday, ex_inputs_currday, ys_transitions, ys
         else:
-            print("Please select **train** or **val** or **test**")
-            raise Exception
+            """ loading data """
+            self.load_flow()
+            self.load_trans()
+            self.load_external_knowledge()
 
-        next_exs = []
-        targets = []
-
-        hist_flow_inputs = []
-        hist_ex_inputs = []
-
-        curr_flow_inputs = []
-        curr_ex_inputs = []
-
-        time_start = hist_day_num * self.parameters.timeslot_daily + hist_day_seq_len # 确定开始时间，预留足够空间给前几天的数据提取
-        time_end = flow_data.shape[0] - target_size + 1 # 确定结束时间，预留足够空间给未来多个时间点的数据提取
-
-        for t in range(time_start, time_end):
-            if t % 100 == 0:
-                print("Currently at {} slot...".format(t))
-
-            hist_flow_inputs_sample = []
-            hist_ex_inputs_sample = []
-
-            curr_flow_inputs_sample = []
-            curr_ex_inputs_sample = []
-
-            for hist_day_cnt in range(hist_day_num):
-                hist_t = int(t - (hist_day_num - hist_day_cnt) * self.parameters.timeslot_daily - (
-                        hist_day_seq_len - 1) / 2) # 计算当天的开始时间
-
-                for hist_seq in range(hist_day_seq_len):
-                    if not conv_embedding:
-                        # 将流量矩阵转置之后flat，flat之后前半为流入量后半为流出量
-                        hist_flow_inputs_sample.append(flow_data[hist_t + hist_seq, :, :, :].transpose((2, 0, 1)).flatten())
-                    else:
-                        hist_flow_inputs_sample.append(flow_data[hist_t + hist_seq, :, :, :])
-                    hist_ex_inputs_sample.append(ex_knlg[hist_t + hist_seq, :]) # 外部信息
-
-            # 逻辑同上
-            for curr_seq in range(curr_day_seq_len):
-                if not conv_embedding:
-                    curr_flow_inputs_sample.append(
-                        flow_data[int(t - (curr_day_seq_len - curr_seq)), :, :, :].transpose((2, 0, 1)).flatten())
-                else:
-                    curr_flow_inputs_sample.append(flow_data[int(t - (curr_day_seq_len - curr_seq)), :, :, :])
-                curr_ex_inputs_sample.append(ex_knlg[int(t - (curr_day_seq_len - curr_seq)), :])
-            curr_flow_inputs.append(np.array(curr_flow_inputs_sample))
-            curr_ex_inputs.append(np.array(curr_ex_inputs_sample))
-            hist_flow_inputs.append(np.array(hist_flow_inputs_sample))
-            hist_ex_inputs.append(np.array(hist_ex_inputs_sample))
-            if not conv_embedding:
-                targets.append(flow_data[t:t + target_size, :, :, :].transpose((0, 3, 1, 2)).reshape(target_size, -1))
+            if datatype == "train":
+                flow_data = self.flow_train
+                trans_data = self.trans_train
+                ex_knlg_data = self.ex_knlg_data_train
+            elif datatype == "test":
+                flow_data = self.flow_test
+                trans_data = self.trans_test
+                ex_knlg_data = self.ex_knlg_data_test
             else:
-                targets.append(flow_data[t:t + target_size, :, :, :])
-            next_exs_sample = ex_knlg[t:t + target_size, :]
-            if not predicted_weather:
-                next_exs_sample[:, 56:] = next_exs_sample[0, 56:]
-            next_exs.append(next_exs_sample)
+                print("Please select **train** or **test**")
+                raise Exception
 
-        curr_flow_inputs = np.array(curr_flow_inputs, dtype=np.float32) # 将列表矩阵化，和他们一样
-        curr_ex_inputs = np.array(curr_ex_inputs, dtype=np.float32)
-        hist_flow_inputs = np.array(hist_flow_inputs, dtype=np.float32)
-        hist_ex_inputs = np.array(hist_ex_inputs, dtype=np.float32)
-        targets = np.array(targets, dtype=np.float32)
-        next_exs = np.array(next_exs, dtype=np.float32)
+            num_intervals_currday += 1     # we add one more interval to be taken as the current input
 
-        if not conv_embedding:
-            return hist_flow_inputs, hist_ex_inputs, curr_flow_inputs, curr_ex_inputs, next_exs, targets
-        else:
-            flow_inputs = np.concatenate([hist_flow_inputs, curr_flow_inputs], axis=1).transpose((0, 2, 3, 1, 4))
-            ex_inputs = np.concatenate([hist_ex_inputs, curr_ex_inputs], axis=1)
-            targets = targets.transpose((0, 2, 3, 1, 4))
+            """ initialize the array to hold the final inputs """
+            ys = []            # ground truth of the inflow and outflow of each node at each time interval
+            ys_transitions = []         # ground truth of the transitions between each node and its neighbors in the area of interest
 
-            return flow_inputs, ex_inputs, next_exs, targets
+            flow_inputs_hist = []   # historical flow inputs from area of interest
+            transition_inputs_hist = []  # historical transition inputs from area of interest
+            ex_inputs_hist = []     # historical external knowledge inputs
 
+            flow_inputs_currday = []   # flow inputs of current day
+            transition_inputs_currday = []  # transition inputs of current day
+            ex_inputs_currday = []     # external knowledge inputs of current day
+
+            assert num_weeks_hist >= 0
+            """ set the start time interval to sample the data"""
+            if num_weeks_hist == 0:
+                time_start = num_days_hist * self.parameters.time_interval_daily + num_intervals_before_predict
+            else:
+                time_start = num_weeks_hist * 7 * self.parameters.time_interval_daily + num_intervals_before_predict
+            time_end = flow_data.shape[0]
+
+            for t in range(time_start, time_end):
+                if t % 100 == 0:
+                    print("Currently at {}th interval...".format(t))
+
+                for x in range(flow_data.shape[1]):
+                    for y in range(flow_data.shape[2]):
+
+                        """ initialize the array to hold the samples of each node at each time interval """
+                        flow_inputs_hist_sample = []
+                        transition_inputs_hist_sample = []
+                        ex_inputs_hist_sample = []
+
+                        flow_inputs_currday_sample = []
+                        transition_inputs_currday_sample = []
+                        ex_inputs_currday_sample = []
+
+                        """ initialize the boundaries of the area of interest """
+                        x_start = x - local_block_len_half    # the start location of each AoI
+                        y_start = y - local_block_len_half
+
+                        """ adjust the start location if it is on the boundaries of the grid map """
+                        if x_start < 0:
+                            x_start_local = 0 - x_start
+                            x_start = 0
+                        else:
+                            x_start_local = 0
+                        if y_start < 0:
+                            y_start_local = 0 - y_start
+                            y_start = 0
+                        else:
+                            y_start_local = 0
+
+                        x_end = x + local_block_len_half + 1    # the end location of each AoI
+                        y_end = y + local_block_len_half + 1
+                        if x_end >= flow_data.shape[1]:
+                            x_end_local = 2 * local_block_len_half + 1 - (x_end - flow_data.shape[1])
+                            x_end = flow_data.shape[1]
+                        else:
+                            x_end_local = 2 * local_block_len_half + 1
+                        if y_end >= flow_data.shape[2]:
+                            y_end_local = 2 * local_block_len_half + 1 - (y_end - flow_data.shape[2])
+                            y_end = flow_data.shape[2]
+                        else:
+                            y_end_local = 2 * local_block_len_half + 1
+
+                        """ start the samplings of previous weeks """
+                        for week_cnt in range(num_weeks_hist):
+                            this_week_start_time = int(t - (
+                                    num_weeks_hist - week_cnt) * 7 * self.parameters.time_interval_daily - num_intervals_before_predict)
+
+                            for int_cnt in range(num_intervals_hist):
+                                t_now = this_week_start_time + int_cnt
+                                local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
+                                                      dtype=np.float32)
+                                local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[t_now,
+                                                                                      x_start:x_end,
+                                                                                      y_start:y_end, :]
+
+                                local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
+                                                       dtype=np.float32)
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
+                                    trans_data[0, t_now, x_start:x_end, y_start:y_end, x, y]
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
+                                    trans_data[1, t_now, x_start:x_end, y_start:y_end, x, y]
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
+                                    trans_data[0, t_now, x, y, x_start:x_end, y_start:y_end]
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
+                                    trans_data[1, t_now, x, y, x_start:x_end, y_start:y_end]
+
+                                flow_inputs_hist_sample.append(local_flow)
+                                transition_inputs_hist_sample.append(local_trans)
+                                ex_inputs_hist_sample.append(ex_knlg_data[t_now, :])
+
+                        """ start the samplings of previous days"""
+                        for hist_day_cnt in range(num_days_hist):
+                            """ define the start time in previous days """
+                            hist_day_start_time = int(t - (
+                                    num_days_hist - hist_day_cnt) * self.parameters.time_interval_daily - num_intervals_before_predict)
+
+                            """ generate samples from the previous days """
+                            for int_cnt in range(num_intervals_hist):
+                                t_now = hist_day_start_time + int_cnt
+
+                                # define the matrix to hold the historical flow inputs of AoI
+                                local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
+                                                      dtype=np.float32)
+                                # assign historical flow data
+                                local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[t_now,
+                                                                                      x_start:x_end,
+                                                                                      y_start:y_end, :]
+
+                                # define the matrix to hold the historical transition inputs of AoI
+                                local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
+                                                       dtype=np.float32)
+                                """ this part is a little abstract, the point is to sample the in and out transition
+                                    whose duration is less than 2 time intervals """
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
+                                    trans_data[0, t_now, x_start:x_end, y_start:y_end, x, y]
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
+                                    trans_data[1, t_now, x_start:x_end, y_start:y_end, x, y]
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
+                                    trans_data[0, t_now, x, y, x_start:x_end, y_start:y_end]
+                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
+                                    trans_data[1, t_now, x, y, x_start:x_end, y_start:y_end]
+
+                                flow_inputs_hist_sample.append(local_flow)
+                                transition_inputs_hist_sample.append(local_trans)
+                                ex_inputs_hist_sample.append(ex_knlg_data[t_now, :])
+
+                        """ sampling of inputs of current day, the details are similar to those mentioned above """
+                        for int_cnt in range(num_intervals_currday):
+                            t_now = int(t - (num_intervals_currday - int_cnt))
+
+                            local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
+                                                  dtype=np.float32)
+                            local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[
+                                                                                  t_now,
+                                                                                  x_start:x_end, y_start:y_end,
+                                                                                  :]
+
+                            local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
+                                                   dtype=np.float32)
+                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
+                                trans_data[0, t_now, x_start:x_end, y_start:y_end, x, y]
+                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
+                                trans_data[1, t_now, x_start:x_end, y_start:y_end, x, y]
+                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
+                                trans_data[0, t_now, x, y, x_start:x_end, y_start:y_end]
+                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
+                                trans_data[1, t_now, x, y, x_start:x_end, y_start:y_end]
+
+                            flow_inputs_currday_sample.append(local_flow)
+                            transition_inputs_currday_sample.append(local_trans)
+                            ex_inputs_currday_sample.append(ex_knlg_data[t_now, :])
+
+                        """ append the samples of each node to the overall inputs arrays """
+                        flow_inputs_currday.append(np.array(flow_inputs_currday_sample, dtype=np.float32))
+                        transition_inputs_currday.append(np.array(transition_inputs_currday_sample, dtype=np.float32))
+                        ex_inputs_currday.append(np.array(ex_inputs_currday_sample, dtype=np.float32))
+                        flow_inputs_hist.append(np.array(flow_inputs_hist_sample, dtype=np.float32))
+                        transition_inputs_hist.append(np.array(transition_inputs_hist_sample, dtype=np.float32))
+                        ex_inputs_hist.append(np.array(ex_inputs_hist_sample, dtype=np.float32))
+
+                        """ generating the ground truth for each sample """
+                        ys.append(flow_data[t, x, y, :])
+
+                        tar_tb = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
+                                          dtype=np.float32)
+                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
+                            trans_data[0, t, x_start:x_end, y_start:y_end, x, y]
+                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
+                            trans_data[1, t, x_start:x_end, y_start:y_end, x, y]
+                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
+                            trans_data[0, t, x, y, x_start:x_end, y_start:y_end]
+                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
+                            trans_data[1, t, x, y, x_start:x_end, y_start:y_end]
+
+                        ys_transitions.append(tar_tb)
+
+            """ convert the inputs arrays to matrices """
+            flow_inputs_currday = np.array(flow_inputs_currday, dtype=np.float32).transpose((0, 2, 3, 1, 4))
+            transition_inputs_currday = np.array(transition_inputs_currday, dtype=np.float32).transpose((0, 2, 3, 1, 4))
+            ex_inputs_currday = np.array(ex_inputs_currday, dtype=np.float32)
+            flow_inputs_hist = np.array(flow_inputs_hist, dtype=np.float32).transpose((0, 2, 3, 1, 4))
+            transition_inputs_hist = np.array(transition_inputs_hist, dtype=np.float32).transpose((0, 2, 3, 1, 4))
+            ex_inputs_hist = np.array(ex_inputs_hist, dtype=np.float32)
+
+            ys = np.array(ys, dtype=np.float32)
+            ys_transitions = np.array(ys_transitions, dtype=np.float32)
+
+            """ save the matrices """
+            np.savez_compressed("data/flow_inputs_currday_{}_{}.npz".format(self.dataset, datatype), data=flow_inputs_currday)
+            np.savez_compressed("data/transition_inputs_currday_{}_{}.npz".format(self.dataset, datatype),
+                                data=transition_inputs_currday)
+            np.savez_compressed("data/ex_inputs_currday_{}_{}.npz".format(self.dataset, datatype), data=ex_inputs_currday)
+            np.savez_compressed("data/flow_inputs_hist_{}_{}.npz".format(self.dataset, datatype), data=flow_inputs_hist)
+            np.savez_compressed("data/transition_inputs_hist_{}_{}.npz".format(self.dataset, datatype),
+                                data=transition_inputs_hist)
+            np.savez_compressed("data/ex_inputs_hist_{}_{}.npz".format(self.dataset, datatype), data=ex_inputs_hist)
+            np.savez_compressed("data/ys_{}_{}.npz".format(self.dataset, datatype), data=ys)
+            np.savez_compressed("data/ys_transitions_{}_{}.npz".format(self.dataset, datatype), data=ys_transitions)
+
+            return flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_currday, transition_inputs_currday, ex_inputs_currday, ys_transitions, ys
+
+if __name__ == "__main__":
+    data_loader = data_loader('taxi')
+    flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_currday, transition_inputs_currday, \
+    ex_inputs_currday, ys_transitions, ys = \
+        data_loader.generate_data('train',
+                                  0,
+                                  7,
+                                  3,
+                                  1,
+                                  1,
+                                  3,
+                                  False)
