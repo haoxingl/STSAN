@@ -55,7 +55,7 @@ def main():
           .format(num_layers, d_model, dff, num_heads, cnn_layers, cnn_filters))
 
     """ Training settings"""
-    load_saved_data = True
+    load_saved_data = False
     save_ckpt = True
     BATCH_SIZE = 128
     MAX_EPOCHS = 500
