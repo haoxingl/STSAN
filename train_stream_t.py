@@ -10,13 +10,13 @@ import tensorflow as tf
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
-  try:
-    for gpu in gpus:
-      tf.config.experimental.set_memory_growth(gpu, True)
-    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-  except RuntimeError as e:
-    print(e)
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        print(e)
 
 import time
 import argparse
@@ -55,7 +55,7 @@ def main():
           .format(num_layers, d_model, dff, num_heads, cnn_layers, cnn_filters))
 
     """ Training settings"""
-    load_saved_data = False
+    load_saved_data = True
     save_ckpt = True
     BATCH_SIZE = 128
     MAX_EPOCHS = 500
@@ -73,11 +73,12 @@ def main():
     num_weeks_hist = 0
     num_days_hist = 7
     num_intervals_hist = 3
-    num_intervals_currday = 1
+    num_intervals_curr = 1
     num_intervals_before_predict = 1
     local_block_len = 3
-    print("num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_currday: {}, num_intervals_before_predict: {}" \
-          .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_currday, num_intervals_before_predict))
+    print(
+        "num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_curr: {}, num_intervals_before_predict: {}" \
+        .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_curr, num_intervals_before_predict))
 
     def result_writer(str):
         with open("results/stream_t.txt", 'a+') as file:
@@ -96,7 +97,7 @@ def main():
                      num_weeks_hist,
                      num_days_hist,
                      num_intervals_hist,
-                     num_intervals_currday,
+                     num_intervals_curr,
                      num_intervals_before_predict,
                      local_block_len)
 
@@ -112,29 +113,29 @@ def main():
             loss_ = loss_object(real, pred)
             return tf.nn.compute_average_loss(loss_, global_batch_size=GLOBAL_BATCH_SIZE)
 
-        train_in_rmse = tf.keras.metrics.RootMeanSquaredError(name='train_in_rmse')
-        train_out_rmse = tf.keras.metrics.RootMeanSquaredError(name='train_out_rmse')
-        train_in_mae = tf.keras.metrics.MeanAbsoluteError(name='train_in_mae')
-        train_out_mae = tf.keras.metrics.MeanAbsoluteError(name='train_out_mae')
+        train_rmse_1 = tf.keras.metrics.RootMeanSquaredError()
+        train_rmse_2 = tf.keras.metrics.RootMeanSquaredError()
+        train_rmse_3 = tf.keras.metrics.RootMeanSquaredError()
+        train_rmse_4 = tf.keras.metrics.RootMeanSquaredError()
 
-        in_rmse = tf.keras.metrics.RootMeanSquaredError(name='in_rmse')
-        out_rmse = tf.keras.metrics.RootMeanSquaredError(name='out_rmse')
-        in_mae = tf.keras.metrics.MeanAbsoluteError(name='in_mae')
-        out_mae = tf.keras.metrics.MeanAbsoluteError(name='out_mae')
+        test_rmse_1 = tf.keras.metrics.RootMeanSquaredError()
+        test_rmse_2 = tf.keras.metrics.RootMeanSquaredError()
+        test_rmse_3 = tf.keras.metrics.RootMeanSquaredError()
+        test_rmse_4 = tf.keras.metrics.RootMeanSquaredError()
 
         learning_rate = CustomSchedule(d_model, lr_exp, warmup_steps)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
         stream_t = Stream_T(num_layers,
-                               d_model,
-                               num_heads,
-                               dff,
-                               cnn_layers,
-                               cnn_filters,
-                               4,
-                               (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_currday,
-                               dropout_rate)
+                            d_model,
+                            num_heads,
+                            dff,
+                            cnn_layers,
+                            cnn_filters,
+                            4,
+                            (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_curr,
+                            dropout_rate)
 
         last_epoch = -1
 
@@ -167,90 +168,100 @@ def main():
         def train_step(inp, tar):
             x_hist = inp["trans_hist"]
             ex_hist = inp["ex_hist"]
-            x_currday = inp["trans_currday"]
-            ex_currday = inp["ex_currday"]
+            x_curr = inp["trans_curr"]
+            ex_curr = inp["ex_curr"]
 
             ys_transitions = tar["ys_transitions"]
 
             with tf.GradientTape() as tape:
                 predictions, _ = stream_t(x_hist,
-                                           ex_hist,
-                                           x_currday,
-                                           ex_currday,
-                                           training=True)
+                                          ex_hist,
+                                          x_curr,
+                                          ex_curr,
+                                          training=True)
                 loss = loss_function(ys_transitions, predictions)
 
             gradients = tape.gradient(loss, stream_t.trainable_variables)
             optimizer.apply_gradients(zip(gradients, stream_t.trainable_variables))
 
-            train_in_rmse(ys_transitions[:, :, :, 0], predictions[:, :, :, 0])
-            train_out_rmse(ys_transitions[:, :, :, 1], predictions[:, :, :, 1])
-            train_in_mae(ys_transitions[:, :, :, 0], predictions[:, :, :, 0])
-            train_out_mae(ys_transitions[:, :, :, 1], predictions[:, :, :, 1])
+            train_rmse_1(ys_transitions[:, :, :, 0], predictions[:, :, :, 0])
+            train_rmse_2(ys_transitions[:, :, :, 1], predictions[:, :, :, 1])
+            train_rmse_3(ys_transitions[:, :, :, 2], predictions[:, :, :, 2])
+            train_rmse_4(ys_transitions[:, :, :, 3], predictions[:, :, :, 3])
 
         def test_step(inp, tar, threshold):
             x_hist = inp["trans_hist"]
             ex_hist = inp["ex_hist"]
-            x_currday = inp["trans_currday"]
-            ex_currday = inp["ex_currday"]
+            x_curr = inp["trans_curr"]
+            ex_curr = inp["ex_curr"]
 
             ys_transitions = tar["ys_transitions"]
 
-            predictions, _ = stream_t(x_hist, ex_hist, x_currday, ex_currday, training=False)
+            predictions, _ = stream_t(x_hist, ex_hist, x_curr, ex_curr, training=False)
 
             """ here we filter out all nodes where their real flows are less than 10 """
-            real_in = ys_transitions[:, :, :, 0]
-            real_out = ys_transitions[:, :, :, 1]
-            pred_in = predictions[:, :, :, 0]
-            pred_out = predictions[:, :, :, 1]
-            mask_in = tf.where(tf.math.greater(real_in, threshold))
-            mask_out = tf.where(tf.math.greater(real_out, threshold))
-            masked_real_in = tf.gather_nd(real_in, mask_in)
-            masked_real_out = tf.gather_nd(real_out, mask_out)
-            masked_pred_in = tf.gather_nd(pred_in, mask_in)
-            masked_pred_out = tf.gather_nd(pred_out, mask_out)
-            in_rmse(masked_real_in, masked_pred_in)
-            out_rmse(masked_real_out, masked_pred_out)
-            in_mae(masked_real_in, masked_pred_in)
-            out_mae(masked_real_out, masked_pred_out)
+            real_1 = ys_transitions[:, :, :, 0]
+            real_2 = ys_transitions[:, :, :, 1]
+            real_3 = ys_transitions[:, :, :, 2]
+            real_4 = ys_transitions[:, :, :, 3]
+            pred_1 = predictions[:, :, :, 0]
+            pred_2 = predictions[:, :, :, 1]
+            pred_3 = predictions[:, :, :, 2]
+            pred_4 = predictions[:, :, :, 3]
+            mask_1 = tf.where(tf.math.greater(real_1, threshold))
+            mask_2 = tf.where(tf.math.greater(real_2, threshold))
+            mask_3 = tf.where(tf.math.greater(real_3, threshold))
+            mask_4 = tf.where(tf.math.greater(real_4, threshold))
+            masked_real_1 = tf.gather_nd(real_1, mask_1)
+            masked_real_2 = tf.gather_nd(real_2, mask_2)
+            masked_real_3 = tf.gather_nd(real_3, mask_3)
+            masked_real_4 = tf.gather_nd(real_4, mask_4)
+            masked_pred_1 = tf.gather_nd(pred_1, mask_1)
+            masked_pred_2 = tf.gather_nd(pred_2, mask_2)
+            masked_pred_3 = tf.gather_nd(pred_3, mask_3)
+            masked_pred_4 = tf.gather_nd(pred_4, mask_4)
+            test_rmse_1(masked_real_1, masked_pred_1)
+            test_rmse_2(masked_real_2, masked_pred_2)
+            test_rmse_3(masked_real_3, masked_pred_3)
+            test_rmse_4(masked_real_4, masked_pred_4)
 
         @tf.function
         def distributed_test_step(inp, tar, threshold):
             strategy.experimental_run_v2(test_step, args=(inp, tar, threshold,))
 
-        def evaluate(test_dataset, flow_max, epoch, verbose=1):
+        def evaluate(val_dataset, flow_max, epoch, verbose=1):
             threshold = 10 / flow_max
 
-            in_rmse.reset_states()
-            out_rmse.reset_states()
-            in_mae.reset_states()
-            out_mae.reset_states()
+            test_rmse_1.reset_states()
+            test_rmse_2.reset_states()
+            test_rmse_3.reset_states()
+            test_rmse_4.reset_states()
 
-            for (batch, (inp, tar)) in enumerate(test_dataset):
+            for (batch, (inp, tar)) in enumerate(val_dataset):
 
                 distributed_test_step(inp, tar, threshold)
 
                 if verbose and (batch + 1) % 100 == 0:
                     print(
-                        'Epoch {} ValBatch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}'.format(
+                        'Epoch {} ValBatch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
                             epoch + 1,
                             batch + 1,
-                            in_rmse.result(),
-                            out_rmse.result(),
-                            in_mae.result(),
-                            out_mae.result()))
+                            test_rmse_1.result(),
+                            test_rmse_2.result(),
+                            test_rmse_3.result(),
+                            test_rmse_4.result()))
 
             if verbose:
-                template = 'Epoch {} Total: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
+                template = 'Epoch {} Total: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
                     epoch + 1,
-                    in_rmse.result(),
-                    out_rmse.result(),
-                    in_mae.result(),
-                    out_mae.result())
+                    test_rmse_1.result(),
+                    test_rmse_2.result(),
+                    test_rmse_3.result(),
+                    test_rmse_4.result())
                 result_writer(template)
                 print(template)
 
-            return in_rmse.result(), out_rmse.result()
+            return test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result()
 
         @tf.function
         def distributed_train_step(inp, tar):
@@ -258,7 +269,7 @@ def main():
 
         if direct_test:
             print("Final Test Result: ")
-            _, _ = evaluate(test_dataset, flow_max, -2)
+            _, _, _, _ = evaluate(test_dataset, flow_max, -2)
 
         """ Start training... """
         if not direct_test:
@@ -267,16 +278,32 @@ def main():
             earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold)
             for epoch in range(MAX_EPOCHS):
 
+                if epoch > 0 and epoch % (earlystop_patience + 1) == 0:
+                    train_dataset, val_dataset, test_dataset = \
+                        load_dataset(args.dataset,
+                                     load_saved_data,
+                                     GLOBAL_BATCH_SIZE,
+                                     num_weeks_hist,
+                                     num_days_hist,
+                                     num_intervals_hist,
+                                     num_intervals_curr,
+                                     num_intervals_before_predict,
+                                     local_block_len)
+
+                    train_dataset = strategy.experimental_distribute_dataset(train_dataset)
+                    val_dataset = strategy.experimental_distribute_dataset(val_dataset)
+                    test_dataset = strategy.experimental_distribute_dataset(test_dataset)
+
                 if ckpt_rec_flag and (epoch + 1) < last_epoch:
                     skip_flag = True
                     continue
 
                 start = time.time()
 
-                train_in_rmse.reset_states()
-                train_out_rmse.reset_states()
-                train_in_mae.reset_states()
-                train_out_mae.reset_states()
+                train_rmse_1.reset_states()
+                train_rmse_2.reset_states()
+                train_rmse_3.reset_states()
+                train_rmse_4.reset_states()
 
                 for (batch, (inp, tar)) in enumerate(train_dataset):
                     if skip_flag:
@@ -285,31 +312,35 @@ def main():
                     distributed_train_step(inp, tar)
 
                     if (batch + 1) % 100 == 0 and verbose_train:
-                        print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
+                        print('Epoch {} Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
                             epoch + 1,
                             batch + 1,
-                            train_in_rmse.result(),
-                            train_out_rmse.result(),
-                            train_in_mae.result(),
-                            train_out_mae.result()))
+                            train_rmse_1.result(),
+                            train_rmse_2.result(),
+                            train_rmse_3.result(),
+                            train_rmse_4.result()))
 
                 if not skip_flag and verbose_train:
-                    template = 'Epoch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
+                    template = 'Epoch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
                         epoch + 1,
-                        train_in_rmse.result(),
-                        train_out_rmse.result(),
-                        train_in_mae.result(),
-                        train_out_mae.result())
+                        train_rmse_1.result(),
+                        train_rmse_2.result(),
+                        train_rmse_3.result(),
+                        train_rmse_4.result())
                     print(template)
                     result_writer(template + '\n')
                     print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
                 if (epoch + 1) > earlystop_epoch and (epoch + 1) % test_period == 0:
                     print("Validation Result: ")
-                    in_rmse_value, out_rmse_value = evaluate(val_dataset, flow_max, epoch)
-                    earlystop_flag = earlystop_helper.check(in_rmse_value, out_rmse_value, epoch)
+                    rmse_value_1, rmse_value_2, rmse_value_3, rmse_value_4 = evaluate(val_dataset, flow_max, epoch)
+                    earlystop_flag = earlystop_helper.check(rmse_value_1 + rmse_value_2, rmse_value_3 + rmse_value_4,
+                                                            epoch)
                     print("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
                     result_writer("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
+                    if earlystop_helper.get_bestepoch() == epoch + 1:
+                        print('Eager test result: ')
+                        _, _, _, _ = evaluate(test_dataset, flow_max, epoch)
 
                 if not skip_flag and save_ckpt and epoch % test_period == 0:
                     ckpt_save_path = ckpt_manager.save()
@@ -326,7 +357,7 @@ def main():
                 skip_flag = False
 
             print("Final Test Result: ")
-            _, _ = evaluate(test_dataset, flow_max, epoch)
+            _, _, _, _ = evaluate(test_dataset, flow_max, epoch)
 
 
 if __name__ == "__main__":

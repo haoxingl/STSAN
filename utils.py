@@ -23,15 +23,15 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 def load_dataset(dataset='taxi', load_saved_data=False, batch_size=64, num_weeks_hist=0, num_days_hist=7,
-                 num_intervals_hist=3, num_intervals_currday=1, num_intervals_before_predict=1, local_block_len=3):
+                 num_intervals_hist=3, num_intervals_curr=1, num_intervals_before_predict=1, local_block_len=3):
     data_loader = dl.data_loader(dataset)
-    flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_currday, transition_inputs_currday, \
-    ex_inputs_currday, ys_transitions, ys = \
+    flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, \
+    ex_inputs_curr, ys_transitions, ys = \
         data_loader.generate_data('train',
                                   num_weeks_hist,
                                   num_days_hist,
                                   num_intervals_hist,
-                                  num_intervals_currday,
+                                  num_intervals_curr,
                                   num_intervals_before_predict,
                                   local_block_len,
                                   load_saved_data)
@@ -42,9 +42,9 @@ def load_dataset(dataset='taxi', load_saved_data=False, batch_size=64, num_weeks
                 "flow_hist": flow_inputs_hist,
                 "trans_hist": transition_inputs_hist,
                 "ex_hist": ex_inputs_hist,
-                "flow_currday": flow_inputs_currday,
-                "trans_currday": transition_inputs_currday,
-                "ex_currday": ex_inputs_currday
+                "flow_curr": flow_inputs_curr,
+                "trans_curr": transition_inputs_curr,
+                "ex_curr": ex_inputs_curr
             },
             {
                 "ys_transitions": ys_transitions,
@@ -56,19 +56,19 @@ def load_dataset(dataset='taxi', load_saved_data=False, batch_size=64, num_weeks
     train_size = int(0.8 * flow_inputs_hist.shape[0])
 
     dataset = dataset.cache()
-    dataset = dataset.shuffle(flow_inputs_hist.shape[0])
-    train_set = dataset.take(train_size)
+    dataset = dataset.shuffle(flow_inputs_hist.shape[0], reshuffle_each_iteration=False)
+    train_set = dataset.take(train_size).shuffle(train_size)
     val_set = dataset.skip(train_size)
     train_set = train_set.batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
     val_set = val_set.batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
 
-    flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_currday, transition_inputs_currday, \
-    ex_inputs_currday, ys_transitions, ys = \
+    flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, \
+    ex_inputs_curr, ys_transitions, ys = \
         data_loader.generate_data('test',
                                   num_weeks_hist,
                                   num_days_hist,
                                   num_intervals_hist,
-                                  num_intervals_currday,
+                                  num_intervals_curr,
                                   num_intervals_before_predict,
                                   local_block_len,
                                   load_saved_data)
@@ -79,9 +79,9 @@ def load_dataset(dataset='taxi', load_saved_data=False, batch_size=64, num_weeks
                 "flow_hist": flow_inputs_hist,
                 "trans_hist": transition_inputs_hist,
                 "ex_hist": ex_inputs_hist,
-                "flow_currday": flow_inputs_currday,
-                "trans_currday": transition_inputs_currday,
-                "ex_currday": ex_inputs_currday
+                "flow_curr": flow_inputs_curr,
+                "trans_curr": transition_inputs_curr,
+                "ex_curr": ex_inputs_curr
             },
             {
                 "ys_transitions": ys_transitions,
@@ -90,8 +90,7 @@ def load_dataset(dataset='taxi', load_saved_data=False, batch_size=64, num_weeks
         )
     )
 
-    test_set = test_set.cache()
-    test_set = test_set.batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)
+    test_set = test_set.batch(batch_size)
 
     return train_set, val_set, test_set
 

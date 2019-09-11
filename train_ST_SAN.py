@@ -65,7 +65,7 @@ def main():
     earlystop_epoch_stream_f = 10
     earlystop_epoch = 20
     earlystop_patience_stream_f = 10
-    earlystop_patience = 20
+    earlystop_patience = 15
     earlystop_threshold = 1.0
     start_from_ckpt = None
     lr_exp = 1
@@ -76,13 +76,13 @@ def main():
     num_weeks_hist = 0
     num_days_hist = 7
     num_intervals_hist = 3
-    num_intervals_currday = 1
+    num_intervals_curr = 1
     num_intervals_before_predict = 1
-    num_intervals_enc = num_days_hist * num_intervals_hist + num_intervals_currday
+    num_intervals_enc = num_days_hist * num_intervals_hist + num_intervals_curr
     local_block_len = 3
     print(
-        "num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_currday: {}, num_intervals_before_predict: {}" \
-        .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_currday, num_intervals_before_predict))
+        "num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_curr: {}, num_intervals_before_predict: {}" \
+        .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_curr, num_intervals_before_predict))
 
     def result_writer(str):
         with open("results/ST-SAN.txt", 'a+') as file:
@@ -101,7 +101,7 @@ def main():
                      num_weeks_hist,
                      num_days_hist,
                      num_intervals_hist,
-                     num_intervals_currday,
+                     num_intervals_curr,
                      num_intervals_before_predict,
                      local_block_len)
 
@@ -190,9 +190,9 @@ def main():
             flow_hist = inp["flow_hist"]
             trans_hist = inp["trans_hist"]
             ex_hist = inp["ex_hist"]
-            flow_currday = inp["flow_currday"]
-            trans_currday = inp["trans_currday"]
-            ex_currday = inp["ex_currday"]
+            flow_curr = inp["flow_curr"]
+            trans_curr = inp["trans_curr"]
+            ex_curr = inp["ex_curr"]
 
             ys = tar["ys"]
 
@@ -200,9 +200,9 @@ def main():
                 predictions, _ = st_san(flow_hist,
                                         trans_hist,
                                         ex_hist,
-                                        flow_currday,
-                                        trans_currday,
-                                        ex_currday,
+                                        flow_curr,
+                                        trans_curr,
+                                        ex_curr,
                                         training=True)
                 loss = loss_function(ys, predictions)
 
@@ -218,13 +218,13 @@ def main():
             flow_hist = inp["flow_hist"]
             trans_hist = inp["trans_hist"]
             ex_hist = inp["ex_hist"]
-            flow_currday = inp["flow_currday"]
-            trans_currday = inp["trans_currday"]
-            ex_currday = inp["ex_currday"]
+            flow_curr = inp["flow_curr"]
+            trans_curr = inp["trans_curr"]
+            ex_curr = inp["ex_curr"]
 
             ys = tar["ys"]
 
-            predictions, _ = st_san(flow_hist, trans_hist, ex_hist, flow_currday, trans_currday, ex_currday,
+            predictions, _ = st_san(flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr,
                                     training=False)
 
             """ here we filter out all nodes where their real flows are less than 10 """
@@ -247,7 +247,7 @@ def main():
         def distributed_test_step(inp, tar, threshold):
             strategy.experimental_run_v2(test_step, args=(inp, tar, threshold,))
 
-        def evaluate(test_dataset, flow_max, epoch, verbose=1):
+        def evaluate(eval_dataset, flow_max, epoch, verbose=1):
             threshold = 10 / flow_max
 
             in_rmse.reset_states()
@@ -255,7 +255,7 @@ def main():
             in_mae.reset_states()
             out_mae.reset_states()
 
-            for (batch, (inp, tar)) in enumerate(test_dataset):
+            for (batch, (inp, tar)) in enumerate(eval_dataset):
 
                 distributed_test_step(inp, tar, threshold)
 
@@ -295,6 +295,22 @@ def main():
             skip_flag = False
             earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold)
             for epoch in range(MAX_EPOCHS):
+
+                if epoch > 0 and epoch % (earlystop_patience + 1) == 0:
+                    train_dataset, val_dataset, test_dataset = \
+                        load_dataset(args.dataset,
+                                     load_saved_data,
+                                     GLOBAL_BATCH_SIZE,
+                                     num_weeks_hist,
+                                     num_days_hist,
+                                     num_intervals_hist,
+                                     num_intervals_curr,
+                                     num_intervals_before_predict,
+                                     local_block_len)
+
+                    train_dataset = strategy.experimental_distribute_dataset(train_dataset)
+                    val_dataset = strategy.experimental_distribute_dataset(val_dataset)
+                    test_dataset = strategy.experimental_distribute_dataset(test_dataset)
 
                 if ckpt_rec_flag and (epoch + 1) < last_epoch:
                     skip_flag = True
@@ -339,6 +355,9 @@ def main():
                     earlystop_flag = earlystop_helper.check(in_rmse_value, out_rmse_value, epoch)
                     print("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
                     result_writer("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
+                    if earlystop_helper.get_bestepoch() == epoch + 1:
+                        print('Eager test result: ')
+                        _, _ = evaluate(test_dataset, flow_max, epoch)
 
                 if not skip_flag and save_ckpt and epoch % test_period == 0:
                     ckpt_save_path = ckpt_manager.save()

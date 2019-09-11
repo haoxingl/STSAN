@@ -84,8 +84,8 @@ class preprocessing_utils:
 
                 if not self.check_time(pu_time) or not self.check_time(do_time):
                     continue
-                pu_slot = self.get_time_interval(pu_time)
-                do_slot = self.get_time_interval(do_time)
+                pu_interval = self.get_time_interval(pu_time)
+                do_interval = self.get_time_interval(do_time)
 
                 pu_grid = self.get_grid_loc(pu_lat, pu_lng)
                 do_grid = self.get_grid_loc(do_lat, do_lng)
@@ -93,12 +93,12 @@ class preprocessing_utils:
                     continue
 
                 valid_num += 1
-                flow_matrix[do_slot, do_grid[0], do_grid[1], 0] += 1
-                flow_matrix[pu_slot, pu_grid[0], pu_grid[1], 1] += 1
-                if do_slot == pu_slot:
-                    trans_matrix[0, do_slot, pu_grid[0], pu_grid[1], do_grid[0], do_grid[1]] += 1
-                if do_slot - pu_slot == 1:
-                    trans_matrix[1, pu_slot, pu_grid[0], pu_grid[1], do_grid[0], do_grid[1]] += 1
+                flow_matrix[do_interval, do_grid[0], do_grid[1], 0] += 1
+                flow_matrix[pu_interval, pu_grid[0], pu_grid[1], 1] += 1
+                if do_interval == pu_interval:
+                    trans_matrix[0, do_interval, pu_grid[0], pu_grid[1], do_grid[0], do_grid[1]] += 1
+                if do_interval - pu_interval == 1:
+                    trans_matrix[1, pu_interval, pu_grid[0], pu_grid[1], do_grid[0], do_grid[1]] += 1
 
             print("Taxi file {} finished.".format(idx + 1))
 
@@ -159,8 +159,8 @@ class preprocessing_utils:
 
                 if not self.check_time(s_time) or not self.check_time(e_time):
                     continue
-                s_slot = self.get_time_interval(s_time)
-                e_slot = self.get_time_interval(e_time)
+                s_interval = self.get_time_interval(s_time)
+                e_interval = self.get_time_interval(e_time)
 
                 s_grid = self.get_grid_loc(s_lat, s_lng)
                 e_grid = self.get_grid_loc(e_lat, e_lng)
@@ -168,12 +168,12 @@ class preprocessing_utils:
                     continue
 
                 valid_num += 1
-                flow_matrix[e_slot, e_grid[0], e_grid[1], 0] += 1
-                flow_matrix[s_slot, s_grid[0], s_grid[1], 1] += 1
-                if e_slot == s_slot:
-                    trans_matrix[0, e_slot, s_grid[0], s_grid[1], e_grid[0], e_grid[1]] += 1
-                if e_slot - s_slot == 1:
-                    trans_matrix[1, s_slot, s_grid[0], s_grid[1], e_grid[0], e_grid[1]] += 1
+                flow_matrix[e_interval, e_grid[0], e_grid[1], 0] += 1
+                flow_matrix[s_interval, s_grid[0], s_grid[1], 1] += 1
+                if e_interval == s_interval:
+                    trans_matrix[0, e_interval, s_grid[0], s_grid[1], e_grid[0], e_grid[1]] += 1
+                if e_interval - s_interval == 1:
+                    trans_matrix[1, s_interval, s_grid[0], s_grid[1], e_grid[0], e_grid[1]] += 1
 
             print("Bike file {} finished.".format(idx + 1))
 
@@ -192,5 +192,5 @@ class preprocessing_utils:
 
 if __name__ == '__main__':
     preprocessor = preprocessing_utils()
-    preprocessor.get_flow_trans_matrices_bike()
     preprocessor.get_flow_trans_matrices_taxi()
+    preprocessor.get_flow_trans_matrices_bike()

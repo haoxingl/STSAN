@@ -236,18 +236,18 @@ class data_loader:
                         """ generating the ground truth for each sample """
                         ys.append(flow_data[t, x, y, :])
 
-                        tar_tb = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
+                        tar_t = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
                                           dtype=np.float32)
-                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
+                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
                             trans_data[0, t, x_start:x_end, y_start:y_end, x, y]
-                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
+                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
                             trans_data[1, t, x_start:x_end, y_start:y_end, x, y]
-                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
+                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
                             trans_data[0, t, x, y, x_start:x_end, y_start:y_end]
-                        tar_tb[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
+                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
                             trans_data[1, t, x, y, x_start:x_end, y_start:y_end]
 
-                        ys_transitions.append(tar_tb)
+                        ys_transitions.append(tar_t)
 
             """ convert the inputs arrays to matrices """
             flow_inputs_currday = np.array(flow_inputs_currday, dtype=np.float32).transpose((0, 2, 3, 1, 4))

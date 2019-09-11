@@ -290,19 +290,19 @@ class Stream_T(Model):
         self.final_layer = layers.Dense(output_size, activation='tanh')
         self.dropout = layers.Dropout(dropout_rate)
 
-    def call(self, x_hist, ex_hist, x_currday, ex_currday, training, enc_padding_mask=None,
+    def call(self, x_hist, ex_hist, x_curr, ex_curr, training, enc_padding_mask=None,
              look_ahead_mask=None,
              dec_padding_mask=None):
 
         # concat all historical data to form the encoder input
-        x = tf.concat([x_hist, x_currday], axis=-2)
-        ex = tf.concat([ex_hist, ex_currday], axis=-2)
+        x = tf.concat([x_hist, x_curr], axis=-2)
+        ex = tf.concat([ex_hist, ex_curr], axis=-2)
         x_enc_inputs = x[:, :, :, :-1, :]
         ex_enc_inputs = ex[:, :-1, :]
 
         # use the last interval as the decoder output
-        x_dec_input = x_currday[:, :, :, -1:, :]
-        ex_dec_input = ex_currday[:, -1:, :]
+        x_dec_input = x_curr[:, :, :, -1:, :]
+        ex_dec_input = ex_curr[:, -1:, :]
 
         enc_output = self.encoder(x_enc_inputs, ex_enc_inputs, training, enc_padding_mask)
 
@@ -334,17 +334,17 @@ class ST_SAN(tf.keras.Model):
 
         self.final_layer = Masked_Fusion('Masked_Fusion', d_final, dropout_rate)
 
-    def call(self, flow_hist, trans_hist, ex_hist, flow_currday, trans_currday, ex_currday, training):
-        flow = tf.concat([flow_hist, flow_currday], axis=-2)
-        trans = tf.concat([trans_hist, trans_currday], axis=-2)
-        ex = tf.concat([ex_hist, ex_currday], axis=-2)
+    def call(self, flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr, training):
+        flow = tf.concat([flow_hist, flow_curr], axis=-2)
+        trans = tf.concat([trans_hist, trans_curr], axis=-2)
+        ex = tf.concat([ex_hist, ex_curr], axis=-2)
         flow_enc_inputs = flow[:, :, :, :-1, :]
         trans_enc_inputs = trans[:, :, :, :-1, :]
         ex_enc_inputs = ex[:, :-1, :]
 
-        flow_dec_input = flow_currday[:, :, :, -1:, :]
-        trans_dec_input = trans_currday[:, :, :, -1:, :]
-        ex_dec_input = ex_currday[:, -1:, :]
+        flow_dec_input = flow_curr[:, :, :, -1:, :]
+        trans_dec_input = trans_curr[:, :, :, -1:, :]
+        ex_dec_input = ex_curr[:, -1:, :]
 
         enc_output_flow = self.flow_encoder(flow_enc_inputs, ex_enc_inputs, training, None)
         enc_output_trans = self.trans_encoder(trans_enc_inputs, ex_enc_inputs, False, None)
