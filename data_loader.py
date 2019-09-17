@@ -39,7 +39,7 @@ class data_loader:
 
         """ loading saved data """
         if load_saved_data:
-            print('Loading data from .npz...')
+            print('Loading data from .npzs...')
             flow_inputs_currday = np.load("data/flow_inputs_currday_{}_{}.npz".format(self.dataset, datatype))['data']
             transition_inputs_currday = np.load("data/transition_inputs_currday_{}_{}.npz".format(self.dataset, datatype))['data']
             ex_inputs_currday = np.load("data/ex_inputs_currday_{}_{}.npz".format(self.dataset, datatype))['data']

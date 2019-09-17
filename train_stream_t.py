@@ -77,6 +77,7 @@ def main(model_index):
     num_intervals_hist = 3
     num_intervals_curr = 1
     num_intervals_before_predict = 1
+    num_intervals_enc = (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_curr
     local_block_len = 3
     print(
         "num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_curr: {}, num_intervals_before_predict: {}" \
@@ -136,7 +137,7 @@ def main(model_index):
                             cnn_layers,
                             cnn_filters,
                             4,
-                            (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_curr,
+                            num_intervals_enc,
                             dropout_rate)
 
         last_epoch = -1
@@ -335,7 +336,6 @@ def main(model_index):
                         train_rmse_4.result())
                     print(template)
                     result_writer(template + '\n')
-                    print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
                 if (epoch + 1) > earlystop_epoch and (epoch + 1) % test_period == 0:
                     print("Validation Result: ")
@@ -344,9 +344,6 @@ def main(model_index):
                                                             epoch)
                     print("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
                     result_writer("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
-                    if earlystop_helper.get_bestepoch() == epoch + 1:
-                        print('Eager test result: ')
-                        _, _, _, _ = evaluate(test_dataset, flow_max, epoch)
 
                 if not skip_flag and save_ckpt and epoch % test_period == 0:
                     ckpt_save_path = ckpt_manager.save()
@@ -361,6 +358,8 @@ def main(model_index):
                     break
 
                 skip_flag = False
+
+                print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
             print("Final Test Result: ")
             _, _, _, _ = evaluate(test_dataset, flow_max, epoch)
