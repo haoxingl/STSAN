@@ -61,7 +61,7 @@ def main(model_index):
     MAX_EPOCHS = 500
     verbose_train = 1
     test_period = 1
-    earlystop_epoch_stream_f = 10
+    earlystop_epoch_stream_f = 20
     earlystop_epoch = 20
     earlystop_patience_stream_f = 10
     earlystop_patience = 15
@@ -295,7 +295,7 @@ def main(model_index):
         if not direct_test:
             earlystop_flag = False
             skip_flag = False
-            earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold)
+            earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold, in_weight=0.3, out_weight=0.7)
             for epoch in range(MAX_EPOCHS):
 
                 if reshuffle_cnt < 3 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
@@ -368,6 +368,7 @@ def main(model_index):
                 if not skip_flag and earlystop_flag:
                     print("Early stoping...")
                     if save_ckpt:
+
                         ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
                         print('Checkpoint restored!! At epoch {}'.format(
                             int(epoch + 1 - earlystop_patience / test_period)))

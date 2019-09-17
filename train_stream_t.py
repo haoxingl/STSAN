@@ -60,7 +60,7 @@ def main(model_index):
     MAX_EPOCHS = 500
     verbose_train = 1
     test_period = 1
-    earlystop_epoch = 10
+    earlystop_epoch = 20
     earlystop_patience = 10
     earlystop_threshold = 1.0
     last_reshuffle_epoch = 0
