@@ -32,8 +32,7 @@ arg_parser.add_argument('--dataset', type=str, default='taxi', help='default is 
 
 args = arg_parser.parse_args()
 
-
-def main():
+def main(model_index):
     if args.dataset == 'taxi':
         flow_max = parameters_nyctaxi.flow_train_max
     elif args.dataset == 'bike':
@@ -56,7 +55,7 @@ def main():
           .format(num_layers, d_model, dff, num_heads, cnn_layers, cnn_filters))
 
     """ Training settings"""
-    load_saved_data = True
+    load_saved_data = False
     save_ckpt = True
     BATCH_SIZE = 128
     MAX_EPOCHS = 500
@@ -67,6 +66,9 @@ def main():
     earlystop_patience_stream_f = 10
     earlystop_patience = 15
     earlystop_threshold = 1.0
+    last_reshuffle_epoch = 0
+    reshuffle_epochs = earlystop_patience
+    reshuffle_cnt = 0
     start_from_ckpt = None
     lr_exp = 1
     warmup_steps = 4000
@@ -85,7 +87,7 @@ def main():
         .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_curr, num_intervals_before_predict))
 
     def result_writer(str):
-        with open("results/ST-SAN.txt", 'a+') as file:
+        with open("results/ST-SAN_{}.txt".format(model_index), 'a+') as file:
             file.write(str)
 
     """ mirror strategy of distributed training """
@@ -143,7 +145,7 @@ def main():
                             dropout_rate)
 
         print('Loading checkpoints...')
-        stream_t_checkpoint_path = "./checkpoints/stream_t"
+        stream_t_checkpoint_path = "./checkpoints/stream_t_{}".format(model_index)
 
         stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=stream_t_optimizer)
 
@@ -161,7 +163,7 @@ def main():
         last_epoch = -1
 
         if save_ckpt:
-            checkpoint_path = "./checkpoints/ST-SAN"
+            checkpoint_path = "./checkpoints/ST-SAN_{}".format(model_index)
 
             ckpt = tf.train.Checkpoint(ST_SAN=st_san, optimizer=optimizer)
 
@@ -296,10 +298,10 @@ def main():
             earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold)
             for epoch in range(MAX_EPOCHS):
 
-                if epoch > 0 and epoch % (earlystop_patience + 1) == 0:
+                if reshuffle_cnt < 3 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
                     train_dataset, val_dataset, test_dataset = \
                         load_dataset(args.dataset,
-                                     load_saved_data,
+                                     True,
                                      GLOBAL_BATCH_SIZE,
                                      num_weeks_hist,
                                      num_days_hist,
@@ -311,6 +313,10 @@ def main():
                     train_dataset = strategy.experimental_distribute_dataset(train_dataset)
                     val_dataset = strategy.experimental_distribute_dataset(val_dataset)
                     test_dataset = strategy.experimental_distribute_dataset(test_dataset)
+
+                    last_reshuffle_epoch = epoch
+                    reshuffle_epochs = int(reshuffle_epochs * 1.2)
+                    reshuffle_cnt += 1
 
                 if ckpt_rec_flag and (epoch + 1) < last_epoch:
                     skip_flag = True
@@ -378,4 +384,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main('13')
