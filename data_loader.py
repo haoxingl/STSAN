@@ -23,28 +23,31 @@ class data_loader:
         self.trans_test = np.load(self.parameters.trans_test)['trans'] / self.parameters.trans_train_max
 
     """ external_knowledge contains the time and weather information of each time interval """
+
     def load_external_knowledge(self):
         self.ex_knlg_data_train = np.load(self.parameters.external_knowledge_train)['external_knowledge']
         self.ex_knlg_data_test = np.load(self.parameters.external_knowledge_test)['external_knowledge']
 
     def generate_data(self, datatype='train',
-                      num_weeks_hist=0,         # number previous weeks we generate the sample from.
-                      num_days_hist=7,          # number of the previous days we generate the sample from
-                      num_intervals_hist=3,         # number of intervals we sample in the previous weeks, days
-                      num_intervals_curr=1,         # number of intervals we sample in the current day
-                      num_intervals_before_predict=1,  # number of intervals before the interval to predict in each day, used to adjust the position of the sliding windows
-                      local_block_len_half=3,        # half of the length of local convolution block
-                      load_saved_data=False):   # loading the previous saved data
-
+                      num_weeks_hist=0,  # number previous weeks we generate the sample from.
+                      num_days_hist=7,  # number of the previous days we generate the sample from
+                      num_intervals_hist=3,  # number of intervals we sample in the previous weeks, days
+                      num_intervals_curr=1,  # number of intervals we sample in the current day
+                      num_intervals_before_predict=1,
+                      # number of intervals before the interval to predict in each day, used to adjust the position of the sliding windows
+                      local_block_len_half=3,  # half of the length of local convolution block
+                      load_saved_data=False):  # loading the previous saved data
 
         """ loading saved data """
         if load_saved_data:
             print('Loading data from .npzs...')
             flow_inputs_curr = np.load("data/flow_inputs_curr_{}_{}.npz".format(self.dataset, datatype))['data']
-            transition_inputs_curr = np.load("data/transition_inputs_curr_{}_{}.npz".format(self.dataset, datatype))['data']
+            transition_inputs_curr = np.load("data/transition_inputs_curr_{}_{}.npz".format(self.dataset, datatype))[
+                'data']
             ex_inputs_curr = np.load("data/ex_inputs_curr_{}_{}.npz".format(self.dataset, datatype))['data']
             flow_inputs_hist = np.load("data/flow_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
-            transition_inputs_hist = np.load("data/transition_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
+            transition_inputs_hist = np.load("data/transition_inputs_hist_{}_{}.npz".format(self.dataset, datatype))[
+                'data']
             ex_inputs_hist = np.load("data/ex_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
             ys = np.load("data/ys_{}_{}.npz".format(self.dataset, datatype))['data']
             ys_transitions = np.load("data/ys_transitions_{}_{}.npz".format(self.dataset, datatype))['data']
@@ -68,19 +71,19 @@ class data_loader:
                 print("Please select **train** or **test**")
                 raise Exception
 
-            num_intervals_curr += 1     # we add one more interval to be taken as the current input
+            num_intervals_curr += 1  # we add one more interval to be taken as the current input
 
             """ initialize the array to hold the final inputs """
-            ys = []            # ground truth of the inflow and outflow of each node at each time interval
-            ys_transitions = []         # ground truth of the transitions between each node and its neighbors in the area of interest
+            ys = []  # ground truth of the inflow and outflow of each node at each time interval
+            ys_transitions = []  # ground truth of the transitions between each node and its neighbors in the area of interest
 
-            flow_inputs_hist = []   # historical flow inputs from area of interest
+            flow_inputs_hist = []  # historical flow inputs from area of interest
             transition_inputs_hist = []  # historical transition inputs from area of interest
-            ex_inputs_hist = []     # historical external knowledge inputs
+            ex_inputs_hist = []  # historical external knowledge inputs
 
-            flow_inputs_curr = []   # flow inputs of current day
+            flow_inputs_curr = []  # flow inputs of current day
             transition_inputs_curr = []  # transition inputs of current day
-            ex_inputs_curr = []     # external knowledge inputs of current day
+            ex_inputs_curr = []  # external knowledge inputs of current day
 
             assert num_weeks_hist >= 0
             """ set the start time interval to sample the data"""
@@ -107,7 +110,7 @@ class data_loader:
                         ex_inputs_curr_sample = []
 
                         """ initialize the boundaries of the area of interest """
-                        x_start = x - local_block_len_half    # the start location of each AoI
+                        x_start = x - local_block_len_half  # the start location of each AoI
                         y_start = y - local_block_len_half
 
                         """ adjust the start location if it is on the boundaries of the grid map """
@@ -122,7 +125,7 @@ class data_loader:
                         else:
                             y_start_local = 0
 
-                        x_end = x + local_block_len_half + 1    # the end location of each AoI
+                        x_end = x + local_block_len_half + 1  # the end location of each AoI
                         y_end = y + local_block_len_half + 1
                         if x_end >= flow_data.shape[1]:
                             x_end_local = 2 * local_block_len_half + 1 - (x_end - flow_data.shape[1])
@@ -145,8 +148,8 @@ class data_loader:
                                 local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
                                                       dtype=np.float32)
                                 local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[t_now,
-                                                                                      x_start:x_end,
-                                                                                      y_start:y_end, :]
+                                                                                                      x_start:x_end,
+                                                                                                      y_start:y_end, :]
 
                                 local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
                                                        dtype=np.float32)
@@ -178,8 +181,8 @@ class data_loader:
                                                       dtype=np.float32)
                                 # assign historical flow data
                                 local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[t_now,
-                                                                                      x_start:x_end,
-                                                                                      y_start:y_end, :]
+                                                                                                      x_start:x_end,
+                                                                                                      y_start:y_end, :]
 
                                 # define the matrix to hold the historical transition inputs of AoI
                                 local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
@@ -206,9 +209,10 @@ class data_loader:
                             local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
                                                   dtype=np.float32)
                             local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[
-                                                                                  t_now,
-                                                                                  x_start:x_end, y_start:y_end,
-                                                                                  :]
+                                                                                                  t_now,
+                                                                                                  x_start:x_end,
+                                                                                                  y_start:y_end,
+                                                                                                  :]
 
                             local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
                                                    dtype=np.float32)
@@ -237,7 +241,7 @@ class data_loader:
                         ys.append(flow_data[t, x, y, :])
 
                         tar_t = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
-                                          dtype=np.float32)
+                                         dtype=np.float32)
                         tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
                             trans_data[0, t, x_start:x_end, y_start:y_end, x, y]
                         tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \

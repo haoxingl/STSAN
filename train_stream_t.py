@@ -32,6 +32,7 @@ arg_parser.add_argument('--dataset', type=str, default='taxi', help='default is 
 
 args = arg_parser.parse_args()
 
+
 def main(model_index):
     if args.dataset == 'taxi':
         flow_max = parameters_nyctaxi.flow_train_max
@@ -81,7 +82,8 @@ def main(model_index):
     local_block_len = 3
     print(
         "num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_curr: {}, num_intervals_before_predict: {}" \
-        .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_curr, num_intervals_before_predict))
+            .format(num_weeks_hist, num_days_hist, num_intervals_hist, num_intervals_curr,
+                    num_intervals_before_predict))
 
     def result_writer(str):
         with open("results/stream_t_{}.txt".format(model_index), 'a+') as file:
@@ -93,20 +95,25 @@ def main(model_index):
 
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
 
-    train_dataset, val_dataset, test_dataset = \
-        load_dataset(args.dataset,
-                     load_saved_data,
-                     GLOBAL_BATCH_SIZE,
-                     num_weeks_hist,
-                     num_days_hist,
-                     num_intervals_hist,
-                     num_intervals_curr,
-                     num_intervals_before_predict,
-                     local_block_len)
+    def get_datasets():
+        train_dataset, val_dataset, test_dataset = \
+            load_dataset(args.dataset,
+                         load_saved_data,
+                         GLOBAL_BATCH_SIZE,
+                         num_weeks_hist,
+                         num_days_hist,
+                         num_intervals_hist,
+                         num_intervals_curr,
+                         num_intervals_before_predict,
+                         local_block_len)
 
-    train_dataset = strategy.experimental_distribute_dataset(train_dataset)
-    val_dataset = strategy.experimental_distribute_dataset(val_dataset)
-    test_dataset = strategy.experimental_distribute_dataset(test_dataset)
+        train_dataset = strategy.experimental_distribute_dataset(train_dataset)
+        val_dataset = strategy.experimental_distribute_dataset(val_dataset)
+        test_dataset = strategy.experimental_distribute_dataset(test_dataset)
+
+        return train_dataset, val_dataset, test_dataset
+
+    train_dataset, val_dataset, test_dataset = get_datasets()
 
     with strategy.scope():
 
@@ -282,20 +289,7 @@ def main(model_index):
             for epoch in range(MAX_EPOCHS):
 
                 if reshuffle_cnt < 2 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
-                    train_dataset, val_dataset, test_dataset = \
-                        load_dataset(args.dataset,
-                                     True,
-                                     GLOBAL_BATCH_SIZE,
-                                     num_weeks_hist,
-                                     num_days_hist,
-                                     num_intervals_hist,
-                                     num_intervals_curr,
-                                     num_intervals_before_predict,
-                                     local_block_len)
-
-                    train_dataset = strategy.experimental_distribute_dataset(train_dataset)
-                    val_dataset = strategy.experimental_distribute_dataset(val_dataset)
-                    test_dataset = strategy.experimental_distribute_dataset(test_dataset)
+                    train_dataset, val_dataset, test_dataset = get_datasets()
 
                     last_reshuffle_epoch = epoch
                     reshuffle_epochs = int(reshuffle_epochs * 1.2)
@@ -362,8 +356,9 @@ def main(model_index):
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
             print("Final Test Result: ")
+            result_writer("Final Test Result: ")
             _, _, _, _ = evaluate(test_dataset, flow_max, epoch)
 
 
 if __name__ == "__main__":
-    main('13')
+    main('0')
