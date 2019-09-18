@@ -95,7 +95,7 @@ def main(model_index):
 
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
 
-    def get_datasets():
+    def get_datasets(load_saved_data=False):
         train_dataset, val_dataset, test_dataset = \
             load_dataset(args.dataset,
                          load_saved_data,
@@ -135,7 +135,7 @@ def main(model_index):
 
         learning_rate = CustomSchedule(d_model, lr_exp, warmup_steps)
 
-        stream_t_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
         stream_t = Stream_T(num_layers,
                             d_model,
@@ -152,7 +152,7 @@ def main(model_index):
         if save_ckpt:
             checkpoint_path = "./checkpoints/stream_t_{}".format(model_index)
 
-            ckpt = tf.train.Checkpoint(Stream_T=stream_t, stream_t_optimizer=stream_t_optimizer)
+            ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=optimizer)
 
             ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path,
                                                       max_to_keep=(earlystop_patience + earlystop_epoch))
@@ -192,7 +192,7 @@ def main(model_index):
                 loss = loss_function(ys_transitions, predictions)
 
             gradients = tape.gradient(loss, stream_t.trainable_variables)
-            stream_t_optimizer.apply_gradients(zip(gradients, stream_t.trainable_variables))
+            optimizer.apply_gradients(zip(gradients, stream_t.trainable_variables))
 
             train_rmse_1(ys_transitions[:, :, :, 0], predictions[:, :, :, 0])
             train_rmse_2(ys_transitions[:, :, :, 1], predictions[:, :, :, 1])
@@ -264,9 +264,9 @@ def main(model_index):
 
             if verbose:
                 if not testing:
-                    template = 'Epoch {}: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
+                    template = 'Epoch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
                         epoch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result())
-                    result_writer(template)
+                    result_writer('Validation results: ' + template)
                     print(template)
                 else:
                     template = 'Final results: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
@@ -292,7 +292,7 @@ def main(model_index):
             for epoch in range(MAX_EPOCHS):
 
                 if reshuffle_cnt < 2 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
-                    train_dataset, val_dataset, test_dataset = get_datasets()
+                    train_dataset, val_dataset, test_dataset = get_datasets(True)
 
                     last_reshuffle_epoch = epoch
                     reshuffle_epochs = int(reshuffle_epochs * 1.2)
@@ -358,8 +358,8 @@ def main(model_index):
 
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
-            print("Testing:")
-            result_writer("Testing:")
+            print("Start testing:")
+            result_writer("Start testing:\n")
             _, _, _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
 
 

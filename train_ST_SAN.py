@@ -98,7 +98,7 @@ def main(model_index):
 
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
 
-    def get_datasets():
+    def get_datasets(load_saved_data=False):
         train_dataset, val_dataset, test_dataset = \
             load_dataset(args.dataset,
                          load_saved_data,
@@ -281,9 +281,9 @@ def main(model_index):
 
             if verbose:
                 if not testing:
-                    template = 'Epoch {}: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
+                    template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
                         epoch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result())
-                    result_writer(template)
+                    result_writer('Validation results: ' + template)
                     print(template)
                 else:
                     template = 'Final results: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
@@ -310,7 +310,7 @@ def main(model_index):
             for epoch in range(MAX_EPOCHS):
 
                 if reshuffle_cnt < 3 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
-                    train_dataset, val_dataset, test_dataset = get_datasets()
+                    train_dataset, val_dataset, test_dataset = get_datasets(True)
 
                     last_reshuffle_epoch = epoch
                     reshuffle_epochs = int(reshuffle_epochs * 1.2)
@@ -375,8 +375,8 @@ def main(model_index):
 
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
-            print("Testing:")
-            result_writer("Final Test Result: ")
+            print("Start testing:")
+            result_writer("Start testing:\n")
             _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
 
 
