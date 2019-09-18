@@ -151,7 +151,7 @@ def main(model_index):
                             num_intervals_enc,
                             dropout_rate)
 
-        print('Loading checkpoints...')
+        print('Loading tranied Stream-T...')
         stream_t_checkpoint_path = "./checkpoints/stream_t_{}".format(model_index)
 
         stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=stream_t_optimizer)
@@ -162,7 +162,7 @@ def main(model_index):
 
         stream_t_ckpt.restore(stream_t_ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_f / test_period)])
 
-        print('Checkpoints restored...')
+        print('Stream-T restored...')
 
         st_san = ST_SAN(stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals_enc,
                         d_final, dropout_rate)
