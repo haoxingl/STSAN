@@ -135,7 +135,7 @@ def main(model_index):
 
         learning_rate = CustomSchedule(d_model, lr_exp, warmup_steps)
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+        stream_t_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
         stream_t = Stream_T(num_layers,
                             d_model,
@@ -152,7 +152,7 @@ def main(model_index):
         if save_ckpt:
             checkpoint_path = "./checkpoints/stream_t_{}".format(model_index)
 
-            ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=optimizer)
+            ckpt = tf.train.Checkpoint(Stream_T=stream_t, stream_t_optimizer=stream_t_optimizer)
 
             ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path,
                                                       max_to_keep=(earlystop_patience + earlystop_epoch))
@@ -192,7 +192,7 @@ def main(model_index):
                 loss = loss_function(ys_transitions, predictions)
 
             gradients = tape.gradient(loss, stream_t.trainable_variables)
-            optimizer.apply_gradients(zip(gradients, stream_t.trainable_variables))
+            stream_t_optimizer.apply_gradients(zip(gradients, stream_t.trainable_variables))
 
             train_rmse_1(ys_transitions[:, :, :, 0], predictions[:, :, :, 0])
             train_rmse_2(ys_transitions[:, :, :, 1], predictions[:, :, :, 1])
@@ -239,7 +239,7 @@ def main(model_index):
         def distributed_test_step(inp, tar, threshold):
             strategy.experimental_run_v2(test_step, args=(inp, tar, threshold,))
 
-        def evaluate(val_dataset, flow_max, epoch, verbose=1):
+        def evaluate(eval_dataset, flow_max, epoch, verbose=1, testing=False):
             threshold = 10 / flow_max
 
             test_rmse_1.reset_states()
@@ -247,29 +247,32 @@ def main(model_index):
             test_rmse_3.reset_states()
             test_rmse_4.reset_states()
 
-            for (batch, (inp, tar)) in enumerate(val_dataset):
+            for (batch, (inp, tar)) in enumerate(eval_dataset):
 
                 distributed_test_step(inp, tar, threshold)
 
                 if verbose and (batch + 1) % 100 == 0:
-                    print(
-                        'Epoch {} ValBatch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
-                            epoch + 1,
-                            batch + 1,
-                            test_rmse_1.result(),
-                            test_rmse_2.result(),
-                            test_rmse_3.result(),
-                            test_rmse_4.result()))
+                    if not testing:
+                        print(
+                            'Epoch {} Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
+                                epoch + 1, batch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result()))
+                    else:
+                        print(
+                            'Testing: Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
+                                batch + 1, test_rmse_1.result(), test_rmse_2.result(),
+                                test_rmse_3.result(), test_rmse_4.result()))
 
             if verbose:
-                template = 'Epoch {} Total: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
-                    epoch + 1,
-                    test_rmse_1.result(),
-                    test_rmse_2.result(),
-                    test_rmse_3.result(),
-                    test_rmse_4.result())
-                result_writer(template)
-                print(template)
+                if not testing:
+                    template = 'Epoch {}: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
+                        epoch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result())
+                    result_writer(template)
+                    print(template)
+                else:
+                    template = 'Final results: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
+                        test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result())
+                    result_writer(template)
+                    print(template)
 
             return test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result()
 
@@ -279,13 +282,13 @@ def main(model_index):
 
         if direct_test:
             print("Final Test Result: ")
-            _, _, _, _ = evaluate(test_dataset, flow_max, -2)
+            _, _, _, _ = evaluate(test_dataset, flow_max, -2, testing=True)
 
         """ Start training... """
         if not direct_test:
             earlystop_flag = False
             skip_flag = False
-            earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold)
+            earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold, in_weight=0.5, out_weight=0.5)
             for epoch in range(MAX_EPOCHS):
 
                 if reshuffle_cnt < 2 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
@@ -355,9 +358,9 @@ def main(model_index):
 
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
-            print("Final Test Result: ")
-            result_writer("Final Test Result: ")
-            _, _, _, _ = evaluate(test_dataset, flow_max, epoch)
+            print("Testing:")
+            result_writer("Testing:")
+            _, _, _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
 
 
 if __name__ == "__main__":

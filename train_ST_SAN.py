@@ -63,7 +63,7 @@ def main(model_index):
     verbose_train = 1
     test_period = 1
     earlystop_epoch_stream_f = 20
-    earlystop_epoch = 20
+    earlystop_epoch = 40
     earlystop_patience_stream_f = 10
     earlystop_patience = 15
     earlystop_threshold = 1.0
@@ -139,7 +139,7 @@ def main(model_index):
         learning_rate = CustomSchedule(d_model, lr_exp, warmup_steps)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
-        stream_t_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+        # stream_t_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
         stream_t = Stream_T(num_layers,
                             d_model,
@@ -154,7 +154,8 @@ def main(model_index):
         print('Loading tranied Stream-T...')
         stream_t_checkpoint_path = "./checkpoints/stream_t_{}".format(model_index)
 
-        stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=stream_t_optimizer)
+        # stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=stream_t_optimizer)
+        stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t)
 
         stream_t_ckpt_manager = tf.train.CheckpointManager(stream_t_ckpt, stream_t_checkpoint_path,
                                                            max_to_keep=(
@@ -256,7 +257,7 @@ def main(model_index):
         def distributed_test_step(inp, tar, threshold):
             strategy.experimental_run_v2(test_step, args=(inp, tar, threshold,))
 
-        def evaluate(eval_dataset, flow_max, epoch, verbose=1):
+        def evaluate(eval_dataset, flow_max, epoch, verbose=1, testing=False):
             threshold = 10 / flow_max
 
             in_rmse.reset_states()
@@ -269,24 +270,26 @@ def main(model_index):
                 distributed_test_step(inp, tar, threshold)
 
                 if verbose and (batch + 1) % 100 == 0:
-                    print(
-                        'Epoch {} ValBatch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}'.format(
-                            epoch + 1,
-                            batch + 1,
-                            in_rmse.result(),
-                            out_rmse.result(),
-                            in_mae.result(),
-                            out_mae.result()))
+                    if not testing:
+                        print(
+                            "Epoch {} Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}".format(
+                                epoch + 1, batch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result()))
+                    else:
+                        print(
+                            "Testing: Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}".format(
+                                batch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result()))
 
             if verbose:
-                template = 'Epoch {} Total: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
-                    epoch + 1,
-                    in_rmse.result(),
-                    out_rmse.result(),
-                    in_mae.result(),
-                    out_mae.result())
-                result_writer(template)
-                print(template)
+                if not testing:
+                    template = 'Epoch {}: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
+                        epoch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result())
+                    result_writer(template)
+                    print(template)
+                else:
+                    template = 'Final results: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
+                        in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result())
+                    result_writer(template)
+                    print(template)
 
             return in_rmse.result(), out_rmse.result()
 
@@ -296,7 +299,7 @@ def main(model_index):
 
         if direct_test:
             print("Final Test Result: ")
-            _, _ = evaluate(test_dataset, flow_max, -2)
+            _, _ = evaluate(test_dataset, flow_max, -2, testing=True)
 
         """ Start training... """
         if not direct_test:
@@ -372,9 +375,9 @@ def main(model_index):
 
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
-            print("Final Test Result: ")
+            print("Testing:")
             result_writer("Final Test Result: ")
-            _, _ = evaluate(test_dataset, flow_max, epoch)
+            _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
 
 
 if __name__ == "__main__":

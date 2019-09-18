@@ -54,6 +54,7 @@ class data_loader:
 
             return flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, ex_inputs_curr, ys_transitions, ys
         else:
+            print("Loading data...")
             """ loading data """
             self.load_flow()
             self.load_trans()
