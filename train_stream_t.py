@@ -113,7 +113,7 @@ def main(model_index):
 
         return train_dataset, val_dataset, test_dataset
 
-    train_dataset, val_dataset, test_dataset = get_datasets()
+    train_dataset, val_dataset, test_dataset = get_datasets(load_saved_data)
 
     with strategy.scope():
 

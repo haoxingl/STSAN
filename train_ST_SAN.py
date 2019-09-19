@@ -116,7 +116,7 @@ def main(model_index):
 
         return train_dataset, val_dataset, test_dataset
 
-    train_dataset, val_dataset, test_dataset = get_datasets()
+    train_dataset, val_dataset, test_dataset = get_datasets(load_saved_data)
 
     with strategy.scope():
 
@@ -139,7 +139,6 @@ def main(model_index):
         learning_rate = CustomSchedule(d_model, lr_exp, warmup_steps)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
-        # stream_t_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
         stream_t = Stream_T(num_layers,
                             d_model,
@@ -154,7 +153,6 @@ def main(model_index):
         print('Loading tranied Stream-T...')
         stream_t_checkpoint_path = "./checkpoints/stream_t_{}".format(model_index)
 
-        # stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t, optimizer=stream_t_optimizer)
         stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t)
 
         stream_t_ckpt_manager = tf.train.CheckpointManager(stream_t_ckpt, stream_t_checkpoint_path,
