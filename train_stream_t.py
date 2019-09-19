@@ -285,6 +285,7 @@ def main(model_index):
             _, _, _, _ = evaluate(test_dataset, flow_max, -2, testing=True)
 
         """ Start training... """
+        print('\nStart training...\n')
         if not direct_test:
             earlystop_flag = False
             skip_flag = False
@@ -339,8 +340,6 @@ def main(model_index):
                     rmse_value_1, rmse_value_2, rmse_value_3, rmse_value_4 = evaluate(val_dataset, flow_max, epoch)
                     earlystop_flag = earlystop_helper.check(rmse_value_1 + rmse_value_2, rmse_value_3 + rmse_value_4,
                                                             epoch)
-                    print("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
-                    result_writer("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
 
                 if not skip_flag and save_ckpt and epoch % test_period == 0:
                     ckpt_save_path = ckpt_manager.save()
@@ -350,7 +349,7 @@ def main(model_index):
                     print("Early stoping...")
                     if save_ckpt:
                         ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
-                        print('Checkpoint restored!! At epoch {}'.format(
+                        print('Checkpoint restored!! At epoch {}\n'.format(
                             int(epoch + 1 - earlystop_patience / test_period)))
                     break
 

@@ -161,7 +161,7 @@ def main(model_index):
                                                            max_to_keep=(
                                                                    earlystop_patience_stream_f + earlystop_epoch_stream_f))
 
-        stream_t_ckpt.restore(stream_t_ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_f / test_period)])
+        stream_t_ckpt.restore(stream_t_ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_f / test_period)]).expect_partial()
 
         print('Stream-T restored...')
 
@@ -302,6 +302,7 @@ def main(model_index):
             _, _ = evaluate(test_dataset, flow_max, -2, testing=True)
 
         """ Start training... """
+        print('\nStart training...\n')
         if not direct_test:
             earlystop_flag = False
             skip_flag = False
@@ -356,8 +357,6 @@ def main(model_index):
                     print("Validation Result: ")
                     in_rmse_value, out_rmse_value = evaluate(val_dataset, flow_max, epoch)
                     earlystop_flag = earlystop_helper.check(in_rmse_value, out_rmse_value, epoch)
-                    print("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
-                    result_writer("Best epoch {}\n".format(earlystop_helper.get_bestepoch()))
 
                 if not skip_flag and save_ckpt and epoch % test_period == 0:
                     ckpt_save_path = ckpt_manager.save()
@@ -367,7 +366,7 @@ def main(model_index):
                     print("Early stoping...")
                     if save_ckpt:
                         ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
-                        print('Checkpoint restored!! At epoch {}'.format(
+                        print('Checkpoint restored!! At epoch {}\n'.format(
                             int(epoch + 1 - earlystop_patience / test_period)))
                     break
 
