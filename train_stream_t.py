@@ -286,6 +286,7 @@ def main(model_index):
 
         """ Start training... """
         print('\nStart training...\n')
+        result_writer("Start training:\n")
         if not direct_test:
             earlystop_flag = False
             skip_flag = False
