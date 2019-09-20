@@ -27,16 +27,11 @@ import parameters_nycbike
 from utils import CustomSchedule, load_dataset, early_stop_helper
 from model import Stream_T
 
-arg_parser = argparse.ArgumentParser()
-arg_parser.add_argument('--dataset', type=str, default='taxi', help='default is taxi, bike for bike dataset')
 
-args = arg_parser.parse_args()
-
-
-def main(model_index):
-    if args.dataset == 'taxi':
+def main(model_index, dataset='taxi'):
+    if dataset == 'taxi':
         flow_max = parameters_nyctaxi.flow_train_max
-    elif args.dataset == 'bike':
+    elif dataset == 'bike':
         flow_max = parameters_nycbike.flow_train_max
     else:
         raise Exception("Dataset should be taxi or bike")
@@ -97,7 +92,7 @@ def main(model_index):
 
     def get_datasets(load_saved_data=False):
         train_dataset, val_dataset, test_dataset = \
-            load_dataset(args.dataset,
+            load_dataset(dataset,
                          load_saved_data,
                          GLOBAL_BATCH_SIZE,
                          num_weeks_hist,
