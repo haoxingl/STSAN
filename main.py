@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 """ 'taxi' or 'bike' dataset """
-dataset = 'bike'
+dataset = 'taxi'
 print("Dataset chosen: {}".format(dataset))
 assert dataset == 'taxi' or dataset == 'bike'
 

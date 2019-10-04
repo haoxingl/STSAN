@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 import os
 
+os.environ['F_ENABLE_AUTO_MIXED_PRECISION'] = '1'
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 gpu_id = "0, 1, 2, 3, 4, 5, 6, 7"
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id

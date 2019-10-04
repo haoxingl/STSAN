@@ -40,7 +40,7 @@ class data_loader:
 
         """ loading saved data """
         if load_saved_data:
-            print('Loading data from .npzs...')
+            print('Loading {} data from .npzs...'.format(datatype))
             flow_inputs_curr = np.load("data/flow_inputs_curr_{}_{}.npz".format(self.dataset, datatype))['data']
             transition_inputs_curr = np.load("data/transition_inputs_curr_{}_{}.npz".format(self.dataset, datatype))[
                 'data']
@@ -54,7 +54,7 @@ class data_loader:
 
             return flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, ex_inputs_curr, ys_transitions, ys
         else:
-            print("Loading data...")
+            print("Loading {} data...".format(datatype))
             """ loading data """
             self.load_flow()
             self.load_trans()
