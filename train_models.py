@@ -248,7 +248,8 @@ def train_stream_t(model_index, dataset='taxi'):
                     if not testing:
                         print(
                             'Epoch {} Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
-                                epoch + 1, batch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result()))
+                                epoch + 1, batch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(),
+                                test_rmse_4.result()))
                     else:
                         print(
                             'Testing: Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
@@ -258,12 +259,15 @@ def train_stream_t(model_index, dataset='taxi'):
             if verbose:
                 if not testing:
                     template = 'Epoch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
-                        epoch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result())
-                    result_writer("Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n" + template)
+                        epoch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(),
+                        test_rmse_4.result())
+                    result_writer(
+                        "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n" + template)
                     print(template)
                 else:
                     template = 'Final results: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
-                        test_rmse_1.result() * trans_max, test_rmse_2.result() * trans_max, test_rmse_3.result() * trans_max, test_rmse_4.result() * trans_max)
+                        test_rmse_1.result() * trans_max, test_rmse_2.result() * trans_max,
+                        test_rmse_3.result() * trans_max, test_rmse_4.result() * trans_max)
                     result_writer(template)
                     print(template)
 
@@ -479,7 +483,8 @@ def train_st_san(model_index, dataset='taxi'):
                                                            max_to_keep=(
                                                                    earlystop_patience_stream_f + earlystop_epoch_stream_f))
 
-        stream_t_ckpt.restore(stream_t_ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_f / test_period)]).expect_partial()
+        stream_t_ckpt.restore(
+            stream_t_ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_f / test_period)]).expect_partial()
 
         print('Stream-T restored...')
 
@@ -591,21 +596,25 @@ def train_st_san(model_index, dataset='taxi'):
                     if not testing:
                         print(
                             "Epoch {} Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}".format(
-                                epoch + 1, batch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result()))
+                                epoch + 1, batch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(),
+                                out_mae.result()))
                     else:
                         print(
                             "Testing: Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}".format(
-                                batch + 1, in_rmse.result() * flow_max, out_rmse.result() * flow_max, in_mae.result() * flow_max, out_mae.result() * flow_max))
+                                batch + 1, in_rmse.result() * flow_max, out_rmse.result() * flow_max,
+                                in_mae.result() * flow_max, out_mae.result() * flow_max))
 
             if verbose:
                 if not testing:
                     template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
                         epoch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result())
-                    result_writer('Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template)
+                    result_writer(
+                        'Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template + '\n')
                     print(template)
                 else:
                     template = 'Final results: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
-                        in_rmse.result() * flow_max, out_rmse.result() * flow_max, in_mae.result() * flow_max, out_mae.result() * flow_max)
+                        in_rmse.result() * flow_max, out_rmse.result() * flow_max, in_mae.result() * flow_max,
+                        out_mae.result() * flow_max)
                     result_writer(template)
                     print(template)
 
