@@ -30,13 +30,11 @@ from model import Stream_T, ST_SAN
 
 def train_stream_t(model_index, dataset='taxi'):
     if dataset == 'taxi':
-        flow_max = parameters_nyctaxi.flow_train_max
+        trans_max = parameters_nyctaxi.trans_train_max
     elif dataset == 'bike':
-        flow_max = parameters_nycbike.flow_train_max
+        trans_max = parameters_nycbike.trans_train_max
     else:
         raise Exception("Dataset should be taxi or bike")
-
-    direct_test = False
 
     """ Model hyperparameters """
     num_layers = 4
@@ -234,8 +232,8 @@ def train_stream_t(model_index, dataset='taxi'):
         def distributed_test_step(inp, tar, threshold):
             strategy.experimental_run_v2(test_step, args=(inp, tar, threshold,))
 
-        def evaluate(eval_dataset, flow_max, epoch, verbose=1, testing=False):
-            threshold = 10 / flow_max
+        def evaluate(eval_dataset, trans_max, epoch, verbose=1, testing=False):
+            threshold = 10 / trans_max
 
             test_rmse_1.reset_states()
             test_rmse_2.reset_states()
@@ -254,18 +252,18 @@ def train_stream_t(model_index, dataset='taxi'):
                     else:
                         print(
                             'Testing: Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
-                                batch + 1, test_rmse_1.result(), test_rmse_2.result(),
-                                test_rmse_3.result(), test_rmse_4.result()))
+                                batch + 1, test_rmse_1.result() * trans_max, test_rmse_2.result() * trans_max,
+                                test_rmse_3.result() * trans_max, test_rmse_4.result() * trans_max))
 
             if verbose:
                 if not testing:
                     template = 'Epoch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
                         epoch + 1, test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result())
-                    result_writer('Validation results: ' + template)
+                    result_writer("Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n" + template)
                     print(template)
                 else:
                     template = 'Final results: RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}\n'.format(
-                        test_rmse_1.result(), test_rmse_2.result(), test_rmse_3.result(), test_rmse_4.result())
+                        test_rmse_1.result() * trans_max, test_rmse_2.result() * trans_max, test_rmse_3.result() * trans_max, test_rmse_4.result() * trans_max)
                     result_writer(template)
                     print(template)
 
@@ -275,87 +273,86 @@ def train_stream_t(model_index, dataset='taxi'):
         def distributed_train_step(inp, tar):
             strategy.experimental_run_v2(train_step, args=(inp, tar,))
 
-        if direct_test:
-            print("Final Test Result: ")
-            _, _, _, _ = evaluate(test_dataset, flow_max, -2, testing=True)
-
         """ Start training... """
         print('\nStart training...\n')
         result_writer("Start training:\n")
-        if not direct_test:
-            earlystop_flag = False
-            skip_flag = False
-            earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold, in_weight=0.5, out_weight=0.5)
-            for epoch in range(MAX_EPOCHS):
+        earlystop_flag = False
+        skip_flag = False
+        earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold,
+                                             in_weight=0.5, out_weight=0.5)
+        for epoch in range(MAX_EPOCHS):
 
-                if reshuffle_cnt < 2 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
-                    train_dataset, val_dataset, test_dataset = get_datasets(True)
+            if reshuffle_cnt < 2 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
+                train_dataset, val_dataset, test_dataset = get_datasets(True)
 
-                    last_reshuffle_epoch = epoch
-                    reshuffle_epochs = int(reshuffle_epochs * 1.2)
-                    reshuffle_cnt += 1
+                last_reshuffle_epoch = epoch
+                reshuffle_epochs = int(reshuffle_epochs * 1.2)
+                reshuffle_cnt += 1
 
-                if ckpt_rec_flag and (epoch + 1) < last_epoch:
-                    skip_flag = True
-                    continue
+            if ckpt_rec_flag and (epoch + 1) < last_epoch:
+                skip_flag = True
+                continue
 
-                start = time.time()
+            start = time.time()
 
-                train_rmse_1.reset_states()
-                train_rmse_2.reset_states()
-                train_rmse_3.reset_states()
-                train_rmse_4.reset_states()
+            train_rmse_1.reset_states()
+            train_rmse_2.reset_states()
+            train_rmse_3.reset_states()
+            train_rmse_4.reset_states()
 
-                for (batch, (inp, tar)) in enumerate(train_dataset):
-                    if skip_flag:
-                        break
+            for (batch, (inp, tar)) in enumerate(train_dataset):
+                if skip_flag:
+                    break
 
-                    distributed_train_step(inp, tar)
+                distributed_train_step(inp, tar)
 
-                    if (batch + 1) % 100 == 0 and verbose_train:
-                        print('Epoch {} Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
-                            epoch + 1,
-                            batch + 1,
-                            train_rmse_1.result(),
-                            train_rmse_2.result(),
-                            train_rmse_3.result(),
-                            train_rmse_4.result()))
-
-                if not skip_flag and verbose_train:
-                    template = 'Epoch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
+                if (batch + 1) % 100 == 0 and verbose_train:
+                    print('Epoch {} Batch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
                         epoch + 1,
+                        batch + 1,
                         train_rmse_1.result(),
                         train_rmse_2.result(),
                         train_rmse_3.result(),
-                        train_rmse_4.result())
-                    print(template)
-                    result_writer(template + '\n')
+                        train_rmse_4.result()))
 
-                if (epoch + 1) > earlystop_epoch and (epoch + 1) % test_period == 0:
-                    print("Validation Result: ")
-                    rmse_value_1, rmse_value_2, rmse_value_3, rmse_value_4 = evaluate(val_dataset, flow_max, epoch)
-                    earlystop_flag = earlystop_helper.check(rmse_value_1 + rmse_value_2, rmse_value_3 + rmse_value_4,
-                                                            epoch)
+            if not skip_flag and verbose_train:
+                template = 'Epoch {} RMSE_1 {:.6f} RMSE_2 {:.6f} RMSE_3 {:.6f} RMSE_4 {:.6f}'.format(
+                    epoch + 1,
+                    train_rmse_1.result(),
+                    train_rmse_2.result(),
+                    train_rmse_3.result(),
+                    train_rmse_4.result())
+                print(template)
+                result_writer(template + '\n')
 
-                if not skip_flag and save_ckpt and epoch % test_period == 0:
-                    ckpt_save_path = ckpt_manager.save()
-                    print('Saving checkpoint for epoch {} at {}\n'.format(epoch + 1, ckpt_save_path))
+            if (epoch + 1) > earlystop_epoch and (epoch + 1) % test_period == 0:
+                print(
+                    "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold): ")
+                rmse_value_1, rmse_value_2, rmse_value_3, rmse_value_4 = evaluate(val_dataset, trans_max, epoch)
+                earlystop_flag = earlystop_helper.check(rmse_value_1 + rmse_value_2, rmse_value_3 + rmse_value_4,
+                                                        epoch)
 
-                if not skip_flag and earlystop_flag:
-                    print("Early stoping...")
-                    if save_ckpt:
-                        ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
-                        print('Checkpoint restored!! At epoch {}\n'.format(
-                            int(epoch + 1 - earlystop_patience / test_period)))
-                    break
+            if not skip_flag and save_ckpt and epoch % test_period == 0:
+                ckpt_save_path = ckpt_manager.save()
+                print('Saving checkpoint for epoch {} at {}\n'.format(epoch + 1, ckpt_save_path))
 
-                skip_flag = False
+            if not skip_flag and earlystop_flag:
+                print("Early stoping...")
+                if save_ckpt:
+                    ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
+                    print('Checkpoint restored!! At epoch {}\n'.format(
+                        int(epoch + 1 - earlystop_patience / test_period)))
+                break
 
-                print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
+            skip_flag = False
 
-            print("Start testing:")
-            result_writer("Start testing:\n")
-            _, _, _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
+            print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
+
+        print(
+            "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):")
+        result_writer(
+            "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
+        _, _, _, _ = evaluate(test_dataset, trans_max, epoch, testing=True)
 
 
 def train_st_san(model_index, dataset='taxi'):
@@ -365,8 +362,6 @@ def train_st_san(model_index, dataset='taxi'):
         flow_max = parameters_nycbike.flow_train_max
     else:
         raise Exception("Dataset should be taxi or bike")
-
-    direct_test = False
 
     """ Model hyperparameters """
     num_layers = 4  # number of encoder and decoder layers
@@ -600,17 +595,17 @@ def train_st_san(model_index, dataset='taxi'):
                     else:
                         print(
                             "Testing: Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}".format(
-                                batch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result()))
+                                batch + 1, in_rmse.result() * flow_max, out_rmse.result() * flow_max, in_mae.result() * flow_max, out_mae.result() * flow_max))
 
             if verbose:
                 if not testing:
                     template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
                         epoch + 1, in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result())
-                    result_writer('Validation results: ' + template)
+                    result_writer('Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template)
                     print(template)
                 else:
                     template = 'Final results: INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
-                        in_rmse.result(), out_rmse.result(), in_mae.result(), out_mae.result())
+                        in_rmse.result() * flow_max, out_rmse.result() * flow_max, in_mae.result() * flow_max, out_mae.result() * flow_max)
                     result_writer(template)
                     print(template)
 
@@ -620,87 +615,85 @@ def train_st_san(model_index, dataset='taxi'):
         def distributed_train_step(inp, tar):
             strategy.experimental_run_v2(train_step, args=(inp, tar,))
 
-        if direct_test:
-            print("Final Test Result: ")
-            _, _ = evaluate(test_dataset, flow_max, -2, testing=True)
-
         """ Start training... """
         print('\nStart training...\n')
         result_writer("Start training:\n")
-        if not direct_test:
-            earlystop_flag = False
-            skip_flag = False
-            earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold,
-                                                 in_weight=0.3, out_weight=0.7)
-            for epoch in range(MAX_EPOCHS):
+        earlystop_flag = False
+        skip_flag = False
+        earlystop_helper = early_stop_helper(earlystop_patience, test_period, earlystop_epoch, earlystop_threshold,
+                                             in_weight=0.3, out_weight=0.7)
+        for epoch in range(MAX_EPOCHS):
 
-                if reshuffle_cnt < 3 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
-                    train_dataset, val_dataset, test_dataset = get_datasets(True)
+            if reshuffle_cnt < 3 and (epoch - last_reshuffle_epoch) == reshuffle_epochs:
+                train_dataset, val_dataset, test_dataset = get_datasets(True)
 
-                    last_reshuffle_epoch = epoch
-                    reshuffle_epochs = int(reshuffle_epochs * 1.2)
-                    reshuffle_cnt += 1
+                last_reshuffle_epoch = epoch
+                reshuffle_epochs = int(reshuffle_epochs * 1.2)
+                reshuffle_cnt += 1
 
-                if ckpt_rec_flag and (epoch + 1) < last_epoch:
-                    skip_flag = True
-                    continue
+            if ckpt_rec_flag and (epoch + 1) < last_epoch:
+                skip_flag = True
+                continue
 
-                start = time.time()
+            start = time.time()
 
-                train_in_rmse.reset_states()
-                train_out_rmse.reset_states()
-                train_in_mae.reset_states()
-                train_out_mae.reset_states()
+            train_in_rmse.reset_states()
+            train_out_rmse.reset_states()
+            train_in_mae.reset_states()
+            train_out_mae.reset_states()
 
-                for (batch, (inp, tar)) in enumerate(train_dataset):
-                    if skip_flag:
-                        break
+            for (batch, (inp, tar)) in enumerate(train_dataset):
+                if skip_flag:
+                    break
 
-                    distributed_train_step(inp, tar)
+                distributed_train_step(inp, tar)
 
-                    if (batch + 1) % 100 == 0 and verbose_train:
-                        print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
-                            epoch + 1,
-                            batch + 1,
-                            train_in_rmse.result(),
-                            train_out_rmse.result(),
-                            train_in_mae.result(),
-                            train_out_mae.result()))
-
-                if not skip_flag and verbose_train:
-                    template = 'Epoch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
+                if (batch + 1) % 100 == 0 and verbose_train:
+                    print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
                         epoch + 1,
+                        batch + 1,
                         train_in_rmse.result(),
                         train_out_rmse.result(),
                         train_in_mae.result(),
-                        train_out_mae.result())
-                    print(template)
-                    result_writer(template + '\n')
+                        train_out_mae.result()))
 
-                if (epoch + 1) > earlystop_epoch and (epoch + 1) % test_period == 0:
-                    print("Validation Result: ")
-                    in_rmse_value, out_rmse_value = evaluate(val_dataset, flow_max, epoch)
-                    earlystop_flag = earlystop_helper.check(in_rmse_value, out_rmse_value, epoch)
+            if not skip_flag and verbose_train:
+                template = 'Epoch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
+                    epoch + 1,
+                    train_in_rmse.result(),
+                    train_out_rmse.result(),
+                    train_in_mae.result(),
+                    train_out_mae.result())
+                print(template)
+                result_writer(template + '\n')
 
-                if not skip_flag and save_ckpt and epoch % test_period == 0:
-                    ckpt_save_path = ckpt_manager.save()
-                    print('Saving checkpoint for epoch {} at {}\n'.format(epoch + 1, ckpt_save_path))
+            if (epoch + 1) > earlystop_epoch and (epoch + 1) % test_period == 0:
+                print(
+                    "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold): ")
+                in_rmse_value, out_rmse_value = evaluate(val_dataset, flow_max, epoch)
+                earlystop_flag = earlystop_helper.check(in_rmse_value, out_rmse_value, epoch)
 
-                if not skip_flag and earlystop_flag:
-                    print("Early stoping...")
-                    if save_ckpt:
-                        ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
-                        print('Checkpoint restored!! At epoch {}\n'.format(
-                            int(epoch + 1 - earlystop_patience / test_period)))
-                    break
+            if not skip_flag and save_ckpt and epoch % test_period == 0:
+                ckpt_save_path = ckpt_manager.save()
+                print('Saving checkpoint for epoch {} at {}\n'.format(epoch + 1, ckpt_save_path))
 
-                skip_flag = False
+            if not skip_flag and earlystop_flag:
+                print("Early stoping...")
+                if save_ckpt:
+                    ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience / test_period)])
+                    print('Checkpoint restored!! At epoch {}\n'.format(
+                        int(epoch + 1 - earlystop_patience / test_period)))
+                break
 
-                print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
+            skip_flag = False
 
-            print("Start testing:")
-            result_writer("Start testing:\n")
-            _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
+            print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
+
+        print(
+            "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):")
+        result_writer(
+            "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
+        _, _ = evaluate(test_dataset, flow_max, epoch, testing=True)
 
 
 if __name__ == "__main__":
