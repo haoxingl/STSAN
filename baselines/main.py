@@ -134,8 +134,8 @@ def mlp(x_train, y_train, x_test, y_test):
     model = models.Sequential(
         [
             layers.Flatten(),
-            layers.Dense(half_size, activation='relu'),
-            layers.Dense(half_size, activation='relu'),
+            layers.Dense(64, activation='relu'),
+            layers.Dense(64, activation='relu'),
             layers.Dense(output_size, activation='tanh')
         ]
     )

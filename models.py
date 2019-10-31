@@ -54,8 +54,8 @@ class Masked_Fusion(layers.Layer):
 
     def call(self, input_flow, input_trans, training):
 
-        input_flow = tf.squeeze(input_flow)
-        input_trans = tf.squeeze(input_trans)
+        input_flow = tf.squeeze(input_flow, axis=-2)
+        input_trans = tf.squeeze(input_trans, axis=-2)
 
         input_flow *= self.sigact_layers[0](input_trans)
 
