@@ -147,14 +147,14 @@ class ModelTrainer:
             optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
             self.stream_t = Stream_T(num_layers,
-                                d_model,
-                                num_heads,
-                                dff,
-                                cnn_layers,
-                                cnn_filters,
-                                4,
-                                num_intervals_enc,
-                                dropout_rate)
+                                     d_model,
+                                     num_heads,
+                                     dff,
+                                     cnn_layers,
+                                     cnn_filters,
+                                     4,
+                                     num_intervals_enc,
+                                     dropout_rate)
 
             checkpoint_path = "./checkpoints/stream_t_{}".format(self.model_index)
 
@@ -280,7 +280,7 @@ class ModelTrainer:
                             test_rmse_out_trans_1.result(),
                             test_rmse_out_trans_2.result())
                         write_result(result_output_path,
-                                      "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n" + template)
+                                     "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n" + template)
                         print(template)
                     else:
                         template = 'Final results: RMSE_IN_1 {:.2f}({:.6f}) RMSE_IN_2 {:.2f}({:.6f}) RMSE_OUT_1 {:.2f}({:.6f}) RMSE_OUT_2 {:.2f}({:.6f})\n'.format(
@@ -322,13 +322,14 @@ class ModelTrainer:
                     distributed_train_step(self.stream_t, inp, tar)
 
                     if (batch + 1) % 100 == 0 and verbose_train:
-                        print('Epoch {} Batch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}'.format(
-                            epoch + 1,
-                            batch + 1,
-                            train_rmse_in_trans_1.result(),
-                            train_rmse_in_trans_2.result(),
-                            train_rmse_out_trans_1.result(),
-                            train_rmse_out_trans_2.result()))
+                        print(
+                            'Epoch {} Batch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}'.format(
+                                epoch + 1,
+                                batch + 1,
+                                train_rmse_in_trans_1.result(),
+                                train_rmse_in_trans_2.result(),
+                                train_rmse_out_trans_1.result(),
+                                train_rmse_out_trans_2.result()))
 
                 if verbose_train:
                     template = 'Epoch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}'.format(
@@ -341,7 +342,7 @@ class ModelTrainer:
                     write_result(result_output_path, template + '\n')
 
                 eval_rmse = (
-                                   train_rmse_in_trans_1.result() + train_rmse_in_trans_2.result() + train_rmse_out_trans_1.result() + train_rmse_out_trans_2.result()) / 4
+                                    train_rmse_in_trans_1.result() + train_rmse_in_trans_2.result() + train_rmse_out_trans_1.result() + train_rmse_out_trans_2.result()) / 4
 
                 if check_flag == False and earlystop_helper.refresh_status(eval_rmse):
                     check_flag = True
@@ -349,7 +350,8 @@ class ModelTrainer:
                 if check_flag:
                     print(
                         "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold): ")
-                    rmse_value_1, rmse_value_2, rmse_value_3, rmse_value_4 = evaluate(self.stream_t, val_dataset, self.trans_max,
+                    rmse_value_1, rmse_value_2, rmse_value_3, rmse_value_4 = evaluate(self.stream_t, val_dataset,
+                                                                                      self.trans_max,
                                                                                       epoch)
                     earlystop_flag = earlystop_helper.check(rmse_value_1 + rmse_value_2 + rmse_value_3 + rmse_value_4,
                                                             epoch)
@@ -359,7 +361,7 @@ class ModelTrainer:
 
                 if earlystop_flag:
                     print("Early stoping...")
-                    ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_t)])
+                    ckpt.restore(ckpt_manager.checkpoints[0])
                     print('Checkpoint restored!! At epoch {}\n'.format(
                         int(epoch - earlystop_patience_stream_t)))
                     break
@@ -372,7 +374,7 @@ class ModelTrainer:
             print(
                 "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):")
             write_result(result_output_path,
-                          "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
+                         "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
             _, _, _, _ = evaluate(self.stream_t, test_dataset, self.trans_max, epoch, testing=True)
 
     def train_st_san(self):
@@ -405,14 +407,14 @@ class ModelTrainer:
 
             if not self.stream_t:
                 self.stream_t = Stream_T(num_layers,
-                                    d_model,
-                                    num_heads,
-                                    dff,
-                                    cnn_layers,
-                                    cnn_filters,
-                                    4,
-                                    num_intervals_enc,
-                                    dropout_rate)
+                                         d_model,
+                                         num_heads,
+                                         dff,
+                                         cnn_layers,
+                                         cnn_filters,
+                                         4,
+                                         num_intervals_enc,
+                                         dropout_rate)
 
                 print('Loading tranied Stream-T...')
                 stream_t_checkpoint_path = "./checkpoints/stream_t_{}".format(self.model_index)
@@ -424,12 +426,13 @@ class ModelTrainer:
                                                                            earlystop_patience_stream_t + 1))
 
                 stream_t_ckpt.restore(
-                    stream_t_ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_t)]).expect_partial()
+                    stream_t_ckpt_manager.checkpoints[0]).expect_partial()
 
                 print('Stream-T restored...')
 
-            self.st_san = ST_SAN(self.stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals_enc,
-                            d_final, dropout_rate)
+            self.st_san = ST_SAN(self.stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters,
+                                 num_intervals_enc,
+                                 d_final, dropout_rate)
 
             checkpoint_path = "./checkpoints/ST-SAN_{}".format(self.model_index)
 
@@ -548,7 +551,7 @@ class ModelTrainer:
                             epoch + 1, test_inflow_rmse.result(), test_outflow_rmse.result(), test_inflow_mae.result(),
                             test_outflow_mae.result())
                         write_result(result_output_path,
-                                      'Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template + '\n')
+                                     'Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template + '\n')
                         print(template)
                     else:
                         template = 'Final results: INFLOW_RMSE {:.2f}({:.6f}) OUTFLOW_RMSE {:.2f}({:.6f}) INFLOW_MAE {:.2f}({:.6f}) OUTFLOW_MAE {:.2f}({:.6f})\n'.format(
@@ -574,7 +577,8 @@ class ModelTrainer:
             write_result(result_output_path, "Start training:\n")
             earlystop_flag = False
             check_flag = False
-            earlystop_helper = EarlystopHelper(self.earlystop_patiences_2, self.earlystop_thres_2, in_weight=0.3, out_weight=0.7)
+            earlystop_helper = EarlystopHelper(self.earlystop_patiences_2, self.earlystop_thres_2, in_weight=0.3,
+                                               out_weight=0.7)
             reshuffle_helper = ReshuffleHelper(self.earlystop_patiences_2[1], self.reshuffle_thres_stsan)
             for epoch in range(MAX_EPOCHS):
 
@@ -624,7 +628,7 @@ class ModelTrainer:
 
                 if earlystop_flag:
                     print("Early stoping...")
-                    ckpt.restore(ckpt_manager.checkpoints[int(-1 - earlystop_patience_stream_t)])
+                    ckpt.restore(ckpt_manager.checkpoints[0])
                     print('Checkpoint restored!! At epoch {}\n'.format(
                         int(epoch - earlystop_patience_stream_t)))
                     break
@@ -637,5 +641,5 @@ class ModelTrainer:
             print(
                 "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):")
             write_result(result_output_path,
-                          "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
+                         "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
             _, _ = evaluate(self.st_san, test_dataset, self.flow_max, epoch, testing=True)

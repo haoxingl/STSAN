@@ -6,11 +6,13 @@ from tensorflow.keras import layers, Model, Sequential
 final_cnn_filters = 128
 
 """ the local convolutional layer before the encoder and deconder stacks """
+
+
 class Local_Conv(layers.Layer):
     def __init__(self, num_layers, num_filters, num_intervals, dropout_rate=0.1):
         super(Local_Conv, self).__init__()
 
-        self.num_intervals = num_intervals      # indicate how many time intervals are included in the historical inputs
+        self.num_intervals = num_intervals  # indicate how many time intervals are included in the historical inputs
         self.num_layers = num_layers
 
         """ data from each time interval will be handled by one set of convolutional layers, therefore totally
@@ -37,12 +39,14 @@ class Local_Conv(layers.Layer):
 
 
 """ the implementation of the Masked Fusion mechanism, check the details in my paper """
+
+
 class Masked_Fusion(layers.Layer):
     def __init__(self, name, d_final, dropout_rate=0.1):
         super(Masked_Fusion, self).__init__(name=name)
 
         self.sigact_layers = [layers.Activation('sigmoid') for _ in range(3)]
-        
+
         self.conv_layers_flow = [layers.Conv2D(final_cnn_filters, (3, 3), activation='relu') for i in range(2)]
         self.conv_layers_trans = [layers.Conv2D(final_cnn_filters, (3, 3), activation='relu') for i in range(2)]
 
@@ -53,7 +57,6 @@ class Masked_Fusion(layers.Layer):
         self.dropout = layers.Dropout(dropout_rate)
 
     def call(self, input_flow, input_trans, training):
-
         input_flow = tf.squeeze(input_flow, axis=-2)
         input_trans = tf.squeeze(input_trans, axis=-2)
 
@@ -92,6 +95,8 @@ def scaled_dot_product_attention(q, k, v, mask):
 
 
 """ the implementation of Spatial-Temporal Multi-Head Attention, detailed in my paper"""
+
+
 class SpatialTemporal_MultiHeadAttention(layers.Layer):
     def __init__(self, d_model, num_heads):
         super(SpatialTemporal_MultiHeadAttention, self).__init__()
@@ -223,7 +228,6 @@ class Encoder(layers.Layer):
                            for _ in range(num_layers)]
 
     def call(self, x, ex, training, mask):
-
         ex_enc = self.ex_encoding(ex[:, :, :55])
         pos_enc = tf.expand_dims(tf.expand_dims(ex_enc, axis=1), axis=1)
 
@@ -268,7 +272,7 @@ class Decoder(layers.Layer):
         x += pos_enc
 
         for i in range(self.num_layers):
-            x, block1, block2  = self.dec_layers[i](x, enc_output, training, look_ahead_mask, padding_mask)
+            x, block1, block2 = self.dec_layers[i](x, enc_output, training, look_ahead_mask, padding_mask)
             attention_weights['decoder_layer{}_block1'.format(i + 1)] = block1
             attention_weights['decoder_layer{}_block2'.format(i + 1)] = block2
 
@@ -276,6 +280,8 @@ class Decoder(layers.Layer):
 
 
 """ define the model structure for Stream-T """
+
+
 class Stream_T(Model):
     def __init__(self, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, output_size,
                  num_intervals,
@@ -293,7 +299,6 @@ class Stream_T(Model):
     def call(self, x_hist, ex_hist, x_curr, ex_curr, training, enc_padding_mask=None,
              look_ahead_mask=None,
              dec_padding_mask=None):
-
         # concat all historical data to form the encoder input
         x = tf.concat([x_hist, x_curr], axis=-2)
         ex = tf.concat([ex_hist, ex_curr], axis=-2)
@@ -319,12 +324,15 @@ class Stream_T(Model):
 
 
 class ST_SAN(tf.keras.Model):
-    def __init__(self, stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals, d_final, dropout_rate):
+    def __init__(self, stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals, d_final,
+                 dropout_rate):
         super(ST_SAN, self).__init__()
 
-        self.flow_encoder = Encoder('Flow_Encoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals,
+        self.flow_encoder = Encoder('Flow_Encoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters,
+                                    num_intervals,
                                     dropout_rate)
-        self.flow_decoder = Decoder('Flow_Decoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, dropout_rate)
+        self.flow_decoder = Decoder('Flow_Decoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters,
+                                    dropout_rate)
 
         self.trans_encoder = stream_t.get_layer('Encoder')
         self.trans_decoder = stream_t.get_layer('Decoder')
@@ -349,7 +357,8 @@ class ST_SAN(tf.keras.Model):
         enc_output_flow = self.flow_encoder(flow_enc_inputs, ex_enc_inputs, training, None)
         enc_output_trans = self.trans_encoder(trans_enc_inputs, ex_enc_inputs, False, None)
 
-        dec_output_flow, attention_weights_t = self.flow_decoder(flow_dec_input, ex_dec_input, enc_output_flow, training, None, None)
+        dec_output_flow, attention_weights_t = self.flow_decoder(flow_dec_input, ex_dec_input, enc_output_flow,
+                                                                 training, None, None)
         dec_output_trans, _ = self.trans_decoder(trans_dec_input, ex_dec_input, enc_output_trans, False, None, None)
 
         final_output = self.final_layer(dec_output_flow, dec_output_trans, training)

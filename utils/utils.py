@@ -3,9 +3,10 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 from utils.DataLoader import DataLoader as dl
 
+
 class DatasetGenerator:
     def __init__(self, dataset='taxi', batch_size=64, num_weeks_hist=0, num_days_hist=7,
-                     num_intervals_hist=3, num_intervals_curr=1, num_intervals_before_predict=1, local_block_len=3):
+                 num_intervals_hist=3, num_intervals_curr=1, num_intervals_before_predict=1, local_block_len=3):
         self.dataset = dataset
         self.batch_size = batch_size
         self.num_weeks_hist = num_weeks_hist
@@ -62,7 +63,8 @@ class DatasetGenerator:
             val_set = val_set.batch(self.batch_size).prefetch(tf.data.experimental.AUTOTUNE)
 
             if strategy:
-                return strategy.experimental_distribute_dataset(train_set), strategy.experimental_distribute_dataset(val_set)
+                return strategy.experimental_distribute_dataset(train_set), strategy.experimental_distribute_dataset(
+                    val_set)
             else:
                 return train_set, val_set
 
@@ -72,13 +74,13 @@ class DatasetGenerator:
                 flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, \
                 ex_inputs_curr, ys_transitions, ys = \
                     self.data_loader.generate_data(datatype,
-                                              self.num_weeks_hist,
-                                              self.num_days_hist,
-                                              self.num_intervals_hist,
-                                              self.num_intervals_curr,
-                                              self.num_intervals_before_predict,
-                                              self.local_block_len,
-                                              load_saved_data)
+                                                   self.num_weeks_hist,
+                                                   self.num_days_hist,
+                                                   self.num_intervals_hist,
+                                                   self.num_intervals_curr,
+                                                   self.num_intervals_before_predict,
+                                                   self.local_block_len,
+                                                   load_saved_data)
 
                 self.test_set = tf.data.Dataset.from_tensor_slices(
                     (
@@ -97,7 +99,10 @@ class DatasetGenerator:
                     )
                 )
 
-                self.test_set = self.test_set.batch(self.batch_size)
+                if self.batch_size > 1:
+                    self.test_set = self.test_set.batch(self.batch_size)
+                else:
+                    self.test_set = self.test_set.shuffle(int(flow_inputs_hist.shape[0])).batch(self.batch_size)
 
             if strategy:
                 return strategy.experimental_distribute_dataset(self.test_set)

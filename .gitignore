@@ -1,5 +1,6 @@
 data/*
 backup/*
+stsan_old/*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

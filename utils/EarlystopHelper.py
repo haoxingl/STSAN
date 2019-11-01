@@ -19,7 +19,7 @@ class EarlystopHelper:
                 self.last_rmse = eval_rmse
                 return False
             else:
-                if (self.last_rmse - eval_rmse)/self.last_rmse <= self.thres:
+                if (self.last_rmse - eval_rmse) / self.last_rmse <= self.thres:
                     self.thres_cnt += 1
                     self.last_rmse = eval_rmse
                     if self.thres_cnt >= self.patiences[0]:

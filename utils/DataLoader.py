@@ -15,12 +15,16 @@ class DataLoader:
             raise Exception
 
     def load_flow(self):
-        self.flow_train = np.array(np.load(self.parameters.flow_train)['flow'], dtype=np.float32) / self.parameters.flow_train_max
-        self.flow_test = np.array(np.load(self.parameters.flow_test)['flow'], dtype=np.float32) / self.parameters.flow_train_max
+        self.flow_train = np.array(np.load(self.parameters.flow_train)['flow'],
+                                   dtype=np.float32) / self.parameters.flow_train_max
+        self.flow_test = np.array(np.load(self.parameters.flow_test)['flow'],
+                                  dtype=np.float32) / self.parameters.flow_train_max
 
     def load_trans(self):
-        self.trans_train = np.array(np.load(self.parameters.trans_train)['trans'], dtype=np.float32) / self.parameters.trans_train_max
-        self.trans_test = np.array(np.load(self.parameters.trans_test)['trans'], dtype=np.float32) / self.parameters.trans_train_max
+        self.trans_train = np.array(np.load(self.parameters.trans_train)['trans'],
+                                    dtype=np.float32) / self.parameters.trans_train_max
+        self.trans_test = np.array(np.load(self.parameters.trans_test)['trans'],
+                                   dtype=np.float32) / self.parameters.trans_train_max
 
     """ external_knowledge contains the time and weather information of each time interval """
 
