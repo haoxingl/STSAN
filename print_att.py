@@ -26,6 +26,64 @@ from models import Stream_T, ST_SAN
 from utils.DataLoader import DataLoader
 
 from random import randint
+import matplotlib.pyplot as plt
+
+def plt_att_t(inp):
+    fig = plt.figure(figsize=(8, 4))
+
+    trans_in = tf.reduce_mean(inp[:, :, :2], axis=-1)
+    trans_out = tf.reduce_mean(inp[:, :, 2:], axis=-1)
+    trans_mtx = [trans_in, trans_out]
+
+    for slice in range(2):
+        ax = fig.add_subplot(1, 2, slice + 1)
+
+        ax.matshow(trans_mtx[slice], cmap='viridis')
+
+        if slice == 0:
+            ax.set_xlabel('spatial attention: inflow', fontdict = {'fontsize': 16})
+        else:
+            ax.set_xlabel('spatial attention: outflow', fontdict = {'fontsize': 16})
+
+    plt.tight_layout()
+    plt.savefig('figures/spatial_attn.png')
+
+def plt_att_f(inp):
+    fig = plt.figure(figsize=(4, 3))
+
+    att = tf.reduce_mean(inp, axis=0)
+    att = tf.reduce_mean(att, axis=0)
+    att = tf.reduce_mean(att, axis=0)
+    att = np.expand_dims(att, axis=0)
+
+    ax = fig.add_subplot(1, 1, 1)
+
+    ax.matshow(att, cmap='viridis')
+
+    fontdict = {'fontsize': 10}
+
+    ax.set_xticks(range(22))
+    ax.set_yticks(range(1))
+
+    ax.set_ylim(0.5, -0.5)
+
+    ls = [['{} - {}'.format(j - 7, i) for i in range(3)] for j in range(7)]
+    labels = []
+
+    for l in ls:
+        labels += l
+
+    labels += ['0 - -1']
+
+    ax.set_xticklabels(
+        labels,
+        fontdict=fontdict, rotation=90)
+
+    # ax.set_yticklabels(['attention'], fontdict={'fontsize': 10})
+
+    ax.set_xlabel('temporal attention')
+
+    plt.savefig('figures/temporal_attn.png')
 
 trans_max = params.trans_train_max
 
@@ -124,6 +182,8 @@ predictions_f, att_f = st_san(flow_hist, trans_hist, ex_hist, flow_curr, trans_c
 
 predictions_t = np.array(predictions_t, dtype=np.float32)
 predictions_f = np.array(predictions_f, dtype=np.float32)
-att_t = np.array(att_t['decoder_layer4_block2'], dtype=np.float32)
-att_f = np.array(att_f['decoder_layer4_block2'], dtype=np.float32)
-predictions_t, predictions_f, att_t, att_f = np.squeeze([predictions_t, predictions_f, att_t, att_f])
+att_t = np.squeeze(np.array(att_t['decoder_layer4_block2'], dtype=np.float32))
+att_f = np.squeeze(np.array(att_f['decoder_layer4_block2'], dtype=np.float32))
+
+plt_att_t(predictions_t)
+plt_att_f(att_f)
