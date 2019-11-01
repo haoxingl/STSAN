@@ -122,4 +122,8 @@ predictions_t, att_t = stream_t(trans_hist, ex_hist, trans_curr, ex_curr, traini
 predictions_f, att_f = st_san(flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr,
                               training=False)
 
-predictions_t =
+predictions_t = np.array(predictions_t, dtype=np.float32)
+predictions_f = np.array(predictions_f, dtype=np.float32)
+att_t = np.array(att_t['decoder_layer4_block2'], dtype=np.float32)
+att_f = np.array(att_f['decoder_layer4_block2'], dtype=np.float32)
+predictions_t, predictions_f, att_t, att_f = np.squeeze([predictions_t, predictions_f, att_t, att_f])
