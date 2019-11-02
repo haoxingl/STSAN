@@ -29,6 +29,7 @@ from utils.EarlystopHelper import EarlystopHelper
 from utils.ReshuffleHelper import ReshuffleHelper
 from models import Stream_T, ST_SAN
 from utils.utils import DatasetGenerator, write_result
+from utils.Metrics import RMSE, MAE
 
 """ Model hyperparameters """
 num_layers = 4
@@ -132,15 +133,15 @@ class ModelTrainer:
                 loss_ = loss_object(real, pred)
                 return tf.nn.compute_average_loss(loss_, global_batch_size=GLOBAL_BATCH_SIZE)
 
-            train_rmse_in_trans_1 = tf.keras.metrics.RootMeanSquaredError()
-            train_rmse_in_trans_2 = tf.keras.metrics.RootMeanSquaredError()
-            train_rmse_out_trans_1 = tf.keras.metrics.RootMeanSquaredError()
-            train_rmse_out_trans_2 = tf.keras.metrics.RootMeanSquaredError()
+            train_rmse_in_trans_1 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            train_rmse_in_trans_2 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            train_rmse_out_trans_1 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            train_rmse_out_trans_2 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
 
-            test_rmse_in_trans_1 = tf.keras.metrics.RootMeanSquaredError()
-            test_rmse_in_trans_2 = tf.keras.metrics.RootMeanSquaredError()
-            test_rmse_out_trans_1 = tf.keras.metrics.RootMeanSquaredError()
-            test_rmse_out_trans_2 = tf.keras.metrics.RootMeanSquaredError()
+            test_rmse_in_trans_1 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            test_rmse_in_trans_2 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            test_rmse_out_trans_1 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            test_rmse_out_trans_2 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
 
             learning_rate = CustomSchedule(d_model, warmup_steps)
 
@@ -230,7 +231,7 @@ class ModelTrainer:
                 test_rmse_out_trans_1(masked_real_3, masked_pred_3)
                 test_rmse_out_trans_2(masked_real_4, masked_pred_4)
 
-            @tf.function
+            @tf.function(experimental_relax_shapes=True)
             def distributed_test_step(stream_t, inp, tar, threshold):
                 strategy.experimental_run_v2(test_step, args=(stream_t, inp, tar, threshold,))
 
@@ -297,7 +298,7 @@ class ModelTrainer:
 
                 return test_rmse_in_trans_1.result(), test_rmse_in_trans_2.result(), test_rmse_out_trans_1.result(), test_rmse_out_trans_2.result()
 
-            @tf.function
+            @tf.function(experimental_relax_shapes=True)
             def distributed_train_step(stream_t, inp, tar):
                 strategy.experimental_run_v2(train_step, args=(stream_t, inp, tar,))
 
@@ -391,15 +392,15 @@ class ModelTrainer:
                 loss_ = loss_object(real, pred)
                 return tf.nn.compute_average_loss(loss_, global_batch_size=GLOBAL_BATCH_SIZE)
 
-            train_inflow_rmse = tf.keras.metrics.RootMeanSquaredError(name='train_inflow_rmse')
-            train_outflow_rmse = tf.keras.metrics.RootMeanSquaredError(name='train_outflow_rmse')
-            train_inflow_mae = tf.keras.metrics.MeanAbsoluteError(name='train_inflow_mae')
-            train_outflow_mae = tf.keras.metrics.MeanAbsoluteError(name='train_outflow_mae')
+            train_inflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            train_outflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            test_inflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
+            test_outflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
 
-            test_inflow_rmse = tf.keras.metrics.RootMeanSquaredError(name='test_inflow_rmse')
-            test_outflow_rmse = tf.keras.metrics.RootMeanSquaredError(name='test_outflow_rmse')
-            test_inflow_mae = tf.keras.metrics.MeanAbsoluteError(name='test_inflow_mae')
-            test_outflow_mae = tf.keras.metrics.MeanAbsoluteError(name='test_outflow_mae')
+            train_inflow_mae = MAE()
+            train_outflow_mae = MAE()
+            test_inflow_mae = MAE()
+            test_outflow_mae = MAE()
 
             learning_rate = CustomSchedule(d_model, warmup_steps)
 
@@ -505,7 +506,7 @@ class ModelTrainer:
                 test_inflow_mae(masked_real_in, masked_pred_in)
                 test_outflow_mae(masked_real_out, masked_pred_out)
 
-            @tf.function
+            @tf.function(experimental_relax_shapes=True)
             def distributed_test_step(st_san, inp, tar, threshold):
                 strategy.experimental_run_v2(test_step, args=(st_san, inp, tar, threshold,))
 
@@ -568,7 +569,7 @@ class ModelTrainer:
 
                 return test_inflow_rmse.result(), test_outflow_rmse.result()
 
-            @tf.function
+            @tf.function(experimental_relax_shapes=True)
             def distributed_train_step(st_san, inp, tar):
                 strategy.experimental_run_v2(train_step, args=(st_san, inp, tar,))
 
