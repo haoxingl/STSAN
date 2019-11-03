@@ -7,6 +7,7 @@ import shutil
 parser = argparse.ArgumentParser(description='Hyperparameters')
 parser.add_argument('--dataset', default='taxi', help='taxi or bike')
 parser.add_argument('--gpu_ids', default='0, 1, 2, 3, 4, 5, 6, 7', help='indexes of gpus to use')
+parser.add_argument('--model_index', default=[1, 2], help='indexes of model to be trained')
 
 """ Model hyperparameters """
 parser.add_argument('--num_layers', default=4, help='num of self-attention layers')
@@ -19,7 +20,7 @@ parser.add_argument('--cnn_layers', default=3)
 parser.add_argument('--cnn_filters', default=64)
 
 """ Training settings """
-parser.add_argument('--remove_old_files', default=False)
+parser.add_argument('--remove_old_files', default=True)
 parser.add_argument('--MAX_EPOCH', default=500)
 parser.add_argument('--BATCH_SIZE', default=128)
 parser.add_argument('--earlystop_patience_stream_t', default=10)
@@ -69,7 +70,7 @@ assert args.dataset == 'taxi' or args.dataset == 'bike'
 from ModelTrainer import ModelTrainer
 
 if __name__ == "__main__":
-    for index in range(1, 2):
+    for index in range(args.model_index[0], args.model_index[1]):
         print('Model index: {}'.format(index))
         model_index = args.dataset + '_{}'.format(index)
         if args.remove_old_files:

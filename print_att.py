@@ -1,3 +1,5 @@
+""" Print out the spatial and temporal importance. Need to run training first """
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os
@@ -67,19 +69,19 @@ def plt_att_f(inp):
 
     ax.set_ylim(0.5, -0.5)
 
-    ls = [['{} - {}'.format(j - 7, i) for i in range(3)] for j in range(7)]
+    ls = [['day [{}] - time [{}]'.format(j - 7, i) for i in range(3)] for j in range(7)]
     labels = []
 
     for l in ls:
         labels += l
 
-    labels += ['0 - -1']
+    labels += ['today - time [0]']
 
     ax.set_xticklabels(
         labels,
         fontdict=fontdict, rotation=90)
 
-    # ax.set_yticklabels(['attention'], fontdict={'fontsize': 10})
+    ax.set_yticklabels(['att'], fontdict={'fontsize': 10})
 
     ax.set_xlabel('temporal attention')
 
@@ -126,7 +128,7 @@ stream_t = Stream_T(num_layers,
                     dropout_rate)
 
 print('Loading tranied Stream-T...')
-stream_t_checkpoint_path = "./checkpoints/stream_t_taxi_1"
+stream_t_checkpoint_path = "./checkpoints/stream_t/taxi_1"
 
 stream_t_ckpt = tf.train.Checkpoint(Stream_T=stream_t)
 
@@ -143,7 +145,7 @@ st_san = ST_SAN(stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_f
                 num_intervals_enc,
                 d_final, dropout_rate)
 
-checkpoint_path = "./checkpoints/ST-SAN_taxi_1"
+checkpoint_path = "./checkpoints/st_san/taxi_1"
 
 ckpt = tf.train.Checkpoint(ST_SAN=st_san)
 
