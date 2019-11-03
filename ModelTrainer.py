@@ -1,12 +1,5 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import os
-
-# os.environ['F_ENABLE_AUTO_MIXED_PRECISION'] = '1'
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-gpu_id = "0, 1, 2, 3, 4, 5, 6, 7"
-os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-
 import tensorflow as tf
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -29,90 +22,44 @@ from utils.EarlystopHelper import EarlystopHelper
 from utils.ReshuffleHelper import ReshuffleHelper
 from models import Stream_T, ST_SAN
 from utils.utils import DatasetGenerator, write_result
-from utils.Metrics import RMSE, MAE
-
-""" Model hyperparameters """
-num_layers = 4
-d_model = 64
-dff = 128
-d_final = 256
-num_heads = 8
-dropout_rate = 0.1
-cnn_layers = 3
-cnn_filters = 64
-print("num_layers: {}, d_model: {}, dff: {}, num_heads: {}, cnn_layers: {}, cnn_filters: {}" \
-      .format(num_layers, d_model, dff, num_heads, cnn_layers, cnn_filters))
-
-""" Training settings"""
-BATCH_SIZE = 128
-MAX_EPOCHS = 500
-earlystop_patience_stream_t = 10
-earlystop_patience_stsan = 15
-warmup_steps = 4000
-verbose_train = 1
-print(
-    "BATCH_SIZE: {}, earlystop_patience_stream_t: {}, earlystop_patience_stsan: {}".format(
-        BATCH_SIZE,
-        earlystop_patience_stream_t,
-        earlystop_patience_stsan
-    )
-)
-
-""" Data hyperparameters """
-load_saved_data = False
-num_weeks_hist = 0
-num_days_hist = 7
-num_intervals_hist = 3
-num_intervals_curr = 1
-num_intervals_before_predict = 1
-num_intervals_enc = (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_curr
-local_block_len = 3
-print(
-    "num_weeks_hist: {}, num_days_hist: {}, num_intervals_hist: {}, num_intervals_curr: {}, num_intervals_before_predict: {}, local_block_len: {}" \
-        .format(num_weeks_hist,
-                num_days_hist,
-                num_intervals_hist,
-                num_intervals_curr,
-                num_intervals_before_predict,
-                local_block_len))
+from utils.Metrics import MAE
 
 """ use mirrored strategy for distributed training """
 strategy = tf.distribute.MirroredStrategy()
 print('Number of GPU devices: {}'.format(strategy.num_replicas_in_sync))
 
-GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-
 
 class ModelTrainer:
-    def __init__(self, model_index, dataset='taxi'):
-        assert dataset == 'taxi' or dataset == 'bike'
+    def __init__(self, model_index, args):
+        assert args.dataset == 'taxi' or args.dataset == 'bike'
         self.model_index = model_index
-        self.dataset = dataset
+        self.args = args
+        self.GLOBAL_BATCH_SIZE = args.BATCH_SIZE * strategy.num_replicas_in_sync
         self.stream_t = None
         self.st_san = None
-        self.dataset_generator = DatasetGenerator(self.dataset,
-                                                  GLOBAL_BATCH_SIZE,
-                                                  num_weeks_hist,
-                                                  num_days_hist,
-                                                  num_intervals_hist,
-                                                  num_intervals_curr,
-                                                  num_intervals_before_predict,
-                                                  local_block_len)
+        self.dataset_generator = DatasetGenerator(args.dataset,
+                                                  self.GLOBAL_BATCH_SIZE,
+                                                  args.num_weeks_hist,
+                                                  args.num_days_hist,
+                                                  args.num_intervals_hist,
+                                                  args.num_intervals_curr,
+                                                  args.num_intervals_before_predict,
+                                                  args.local_block_len)
 
-        if dataset == 'taxi':
+        if args.dataset == 'taxi':
             self.trans_max = parameters_nyctaxi.trans_train_max
             self.flow_max = parameters_nyctaxi.flow_train_max
-            self.earlystop_patiences_1 = [5, 10]
-            self.earlystop_patiences_2 = [5, 15]
+            self.earlystop_patiences_1 = [5, args.earlystop_patience_stream_t]
+            self.earlystop_patiences_2 = [5, args.earlystop_patience_stsan]
             self.earlystop_thres_1 = 0.02
             self.earlystop_thres_2 = 0.01
             self.reshuffle_thres_stream_t = [0.8, 1.3]
             self.reshuffle_thres_stsan = [0.8, 1.3, 1.7]
-        elif dataset == 'bike':
+        else:
             self.trans_max = parameters_nycbike.trans_train_max
             self.flow_max = parameters_nycbike.flow_train_max
-            self.earlystop_patiences_1 = [5, 10]
-            self.earlystop_patiences_2 = [5, 15]
+            self.earlystop_patiences_1 = [5, args.earlystop_patience_stream_t]
+            self.earlystop_patiences_2 = [5, args.earlystop_patience_stsan]
             self.earlystop_thres_1 = 0.02
             self.earlystop_thres_2 = 0.01
             self.reshuffle_thres_stream_t = [0.8, 1.3]
@@ -120,10 +67,10 @@ class ModelTrainer:
 
     def train_stream_t(self):
 
-        result_output_path = "results/stream_t_{}.txt".format(self.model_index)
+        result_output_path = "results/stream_t/{}.txt".format(self.model_index)
 
-        train_dataset, val_dataset = self.dataset_generator.load_dataset('train', load_saved_data, strategy)
-        test_dataset = self.dataset_generator.load_dataset('test', load_saved_data, strategy)
+        train_dataset, val_dataset = self.dataset_generator.load_dataset('train', self.args.load_saved_data, strategy)
+        test_dataset = self.dataset_generator.load_dataset('test', self.args.load_saved_data, strategy)
 
         with strategy.scope():
 
@@ -131,7 +78,7 @@ class ModelTrainer:
 
             def loss_function(real, pred):
                 loss_ = loss_object(real, pred)
-                return tf.nn.compute_average_loss(loss_, global_batch_size=GLOBAL_BATCH_SIZE)
+                return tf.nn.compute_average_loss(loss_, global_batch_size=self.GLOBAL_BATCH_SIZE)
 
             train_rmse_in_trans_1 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
             train_rmse_in_trans_2 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
@@ -143,30 +90,30 @@ class ModelTrainer:
             test_rmse_out_trans_1 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
             test_rmse_out_trans_2 = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
 
-            learning_rate = CustomSchedule(d_model, warmup_steps)
+            learning_rate = CustomSchedule(self.args.d_model, self.args.warmup_steps)
 
             optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
-            self.stream_t = Stream_T(num_layers,
-                                     d_model,
-                                     num_heads,
-                                     dff,
-                                     cnn_layers,
-                                     cnn_filters,
+            self.stream_t = Stream_T(self.args.num_layers,
+                                     self.args.d_model,
+                                     self.args.num_heads,
+                                     self.args.dff,
+                                     self.args.cnn_layers,
+                                     self.args.cnn_filters,
                                      4,
-                                     num_intervals_enc,
-                                     dropout_rate)
+                                     self.args.num_intervals_enc,
+                                     self.args.dropout_rate)
 
-            checkpoint_path = "./checkpoints/stream_t_{}".format(self.model_index)
+            checkpoint_path = "./checkpoints/stream_t/{}".format(self.model_index)
 
             ckpt = tf.train.Checkpoint(Stream_T=self.stream_t, optimizer=optimizer)
 
             ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path,
-                                                      max_to_keep=(earlystop_patience_stream_t + 1))
+                                                      max_to_keep=(self.args.earlystop_patience_stream_t + 1))
 
             if ckpt_manager.latest_checkpoint:
-                if len(ckpt_manager.checkpoints) <= earlystop_patience_stream_t:
-                    ckpt.restore(ckpt_manager.checkpoints[-1])
+                if len(ckpt_manager.checkpoints) <= self.args.earlystop_patience_stream_t:
+                    ckpt.restore(ckpt_manager.latest_checkpoint)
                 else:
                     ckpt.restore(ckpt_manager.checkpoints[0])
                 print('Latest checkpoint restored!!')
@@ -194,6 +141,8 @@ class ModelTrainer:
                 train_rmse_in_trans_2(ys_transitions[:, :, :, 1], predictions[:, :, :, 1])
                 train_rmse_out_trans_1(ys_transitions[:, :, :, 2], predictions[:, :, :, 2])
                 train_rmse_out_trans_2(ys_transitions[:, :, :, 3], predictions[:, :, :, 3])
+
+                return loss
 
             def test_step(stream_t, inp, tar, threshold):
                 x_hist = inp["trans_hist"]
@@ -233,7 +182,7 @@ class ModelTrainer:
 
             @tf.function(experimental_relax_shapes=True)
             def distributed_test_step(stream_t, inp, tar, threshold):
-                strategy.experimental_run_v2(test_step, args=(stream_t, inp, tar, threshold,))
+                return strategy.experimental_run_v2(test_step, args=(stream_t, inp, tar, threshold,))
 
             def evaluate(stream_t, eval_dataset, trans_max, epoch, verbose=1, testing=False):
                 threshold = 10 / trans_max
@@ -300,7 +249,9 @@ class ModelTrainer:
 
             @tf.function(experimental_relax_shapes=True)
             def distributed_train_step(stream_t, inp, tar):
-                strategy.experimental_run_v2(train_step, args=(stream_t, inp, tar,))
+                per_replica_losses = strategy.experimental_run_v2(train_step, args=(stream_t, inp, tar,))
+
+                return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
 
             """ Start training... """
             print('\nStart training...\n')
@@ -309,7 +260,8 @@ class ModelTrainer:
             check_flag = False
             earlystop_helper = EarlystopHelper(self.earlystop_patiences_1, self.earlystop_thres_1)
             reshuffle_helper = ReshuffleHelper(self.earlystop_patiences_1[1], self.reshuffle_thres_stream_t)
-            for epoch in range(MAX_EPOCHS):
+            summary_writer = tf.summary.create_file_writer('./tensorboard/stream_t/{}'.format(self.model_index))
+            for epoch in range(self.args.MAX_EPOCH):
 
                 start = time.time()
 
@@ -320,9 +272,12 @@ class ModelTrainer:
 
                 for (batch, (inp, tar)) in enumerate(train_dataset):
 
-                    distributed_train_step(self.stream_t, inp, tar)
+                    total_loss = distributed_train_step(self.stream_t, inp, tar)
 
-                    if (batch + 1) % 100 == 0 and verbose_train:
+                    with summary_writer.as_default():
+                        tf.summary.scalar("loss", total_loss, step=batch + 1)
+
+                    if (batch + 1) % 100 == 0 and self.args.verbose_train:
                         print(
                             'Epoch {} Batch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}'.format(
                                 epoch + 1,
@@ -332,7 +287,7 @@ class ModelTrainer:
                                 train_rmse_out_trans_1.result(),
                                 train_rmse_out_trans_2.result()))
 
-                if verbose_train:
+                if self.args.verbose_train:
                     template = 'Epoch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}'.format(
                         epoch + 1,
                         train_rmse_in_trans_1.result(),
@@ -364,11 +319,12 @@ class ModelTrainer:
                     print("Early stoping...")
                     ckpt.restore(ckpt_manager.checkpoints[0])
                     print('Checkpoint restored!! At epoch {}\n'.format(
-                        int(epoch - earlystop_patience_stream_t)))
+                        int(epoch - self.args.earlystop_patience_stream_t + 1)))
                     break
 
                 if reshuffle_helper.check(epoch):
-                    train_dataset, val_dataset = self.dataset_generator.load_dataset('train', load_saved_data, strategy)
+                    train_dataset, val_dataset = self.dataset_generator.load_dataset('train', self.args.load_saved_data,
+                                                                                     strategy)
 
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
@@ -379,10 +335,10 @@ class ModelTrainer:
             _, _, _, _ = evaluate(self.stream_t, test_dataset, self.trans_max, epoch, testing=True)
 
     def train_st_san(self):
-        result_output_path = "results/ST-SAN_{}.txt".format(self.model_index)
+        result_output_path = "results/st_san/{}.txt".format(self.model_index)
 
-        train_dataset, val_dataset = self.dataset_generator.load_dataset('train', load_saved_data, strategy)
-        test_dataset = self.dataset_generator.load_dataset('test', load_saved_data, strategy)
+        train_dataset, val_dataset = self.dataset_generator.load_dataset('train', self.args.load_saved_data, strategy)
+        test_dataset = self.dataset_generator.load_dataset('test', self.args.load_saved_data, strategy)
 
         with strategy.scope():
 
@@ -390,7 +346,7 @@ class ModelTrainer:
 
             def loss_function(real, pred):
                 loss_ = loss_object(real, pred)
-                return tf.nn.compute_average_loss(loss_, global_batch_size=GLOBAL_BATCH_SIZE)
+                return tf.nn.compute_average_loss(loss_, global_batch_size=self.GLOBAL_BATCH_SIZE)
 
             train_inflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
             train_outflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
@@ -402,48 +358,54 @@ class ModelTrainer:
             test_inflow_mae = MAE()
             test_outflow_mae = MAE()
 
-            learning_rate = CustomSchedule(d_model, warmup_steps)
+            learning_rate = CustomSchedule(self.args.d_model, self.args.warmup_steps)
 
             optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
             if not self.stream_t:
-                self.stream_t = Stream_T(num_layers,
-                                         d_model,
-                                         num_heads,
-                                         dff,
-                                         cnn_layers,
-                                         cnn_filters,
+                self.stream_t = Stream_T(self.args.num_layers,
+                                         self.args.d_model,
+                                         self.args.num_heads,
+                                         self.args.dff,
+                                         self.args.cnn_layers,
+                                         self.args.cnn_filters,
                                          4,
-                                         num_intervals_enc,
-                                         dropout_rate)
+                                         self.args.num_intervals_enc,
+                                         self.args.dropout_rate)
 
                 print('Loading tranied Stream-T...')
-                stream_t_checkpoint_path = "./checkpoints/stream_t_{}".format(self.model_index)
+                stream_t_checkpoint_path = "./checkpoints/stream_t/{}".format(self.model_index)
 
                 stream_t_ckpt = tf.train.Checkpoint(Stream_T=self.stream_t)
 
                 stream_t_ckpt_manager = tf.train.CheckpointManager(stream_t_ckpt, stream_t_checkpoint_path,
                                                                    max_to_keep=(
-                                                                           earlystop_patience_stream_t + 1))
+                                                                           self.args.earlystop_patience_stream_t + 1))
 
                 stream_t_ckpt.restore(
                     stream_t_ckpt_manager.checkpoints[0]).expect_partial()
 
                 print('Stream-T restored...')
 
-            self.st_san = ST_SAN(self.stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters,
-                                 num_intervals_enc,
-                                 d_final, dropout_rate)
+            self.st_san = ST_SAN(self.stream_t, self.args.num_layers,
+                                 self.args.d_model,
+                                 self.args.num_heads,
+                                 self.args.dff,
+                                 self.args.cnn_layers,
+                                 self.args.cnn_filters,
+                                 self.args.num_intervals_enc,
+                                 self.args.d_final,
+                                 self.args.dropout_rate)
 
-            checkpoint_path = "./checkpoints/ST-SAN_{}".format(self.model_index)
+            checkpoint_path = "./checkpoints/st_san/{}".format(self.model_index)
 
             ckpt = tf.train.Checkpoint(ST_SAN=self.st_san, optimizer=optimizer)
 
             ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path,
-                                                      max_to_keep=(earlystop_patience_stsan + 1))
+                                                      max_to_keep=(self.args.earlystop_patience_stsan + 1))
 
             if ckpt_manager.latest_checkpoint:
-                if len(ckpt_manager.checkpoints) <= earlystop_patience_stsan:
+                if len(ckpt_manager.checkpoints) <= self.args.earlystop_patience_stsan:
                     ckpt.restore(ckpt_manager.checkpoints[-1])
                 else:
                     ckpt.restore(ckpt_manager.checkpoints[0])
@@ -477,6 +439,8 @@ class ModelTrainer:
                 train_inflow_mae(ys[:, 0], predictions[:, 0])
                 train_outflow_mae(ys[:, 1], predictions[:, 1])
 
+                return loss
+
             def test_step(st_san, inp, tar, threshold):
                 flow_hist = inp["flow_hist"]
                 trans_hist = inp["trans_hist"]
@@ -508,7 +472,7 @@ class ModelTrainer:
 
             @tf.function(experimental_relax_shapes=True)
             def distributed_test_step(st_san, inp, tar, threshold):
-                strategy.experimental_run_v2(test_step, args=(st_san, inp, tar, threshold,))
+                return strategy.experimental_run_v2(test_step, args=(st_san, inp, tar, threshold,))
 
             def evaluate(st_san, eval_dataset, flow_max, epoch, verbose=1, testing=False):
                 threshold = 10 / flow_max
@@ -571,7 +535,9 @@ class ModelTrainer:
 
             @tf.function(experimental_relax_shapes=True)
             def distributed_train_step(st_san, inp, tar):
-                strategy.experimental_run_v2(train_step, args=(st_san, inp, tar,))
+                per_replica_losses = strategy.experimental_run_v2(train_step, args=(st_san, inp, tar,))
+
+                return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
 
             """ Start training... """
             print('\nStart training...\n')
@@ -581,7 +547,8 @@ class ModelTrainer:
             earlystop_helper = EarlystopHelper(self.earlystop_patiences_2, self.earlystop_thres_2, in_weight=0.3,
                                                out_weight=0.7)
             reshuffle_helper = ReshuffleHelper(self.earlystop_patiences_2[1], self.reshuffle_thres_stsan)
-            for epoch in range(MAX_EPOCHS):
+            summary_writer = tf.summary.create_file_writer('./tensorboard/st_san/{}'.format(self.model_index))
+            for epoch in range(self.args.MAX_EPOCH):
 
                 start = time.time()
 
@@ -592,9 +559,12 @@ class ModelTrainer:
 
                 for (batch, (inp, tar)) in enumerate(train_dataset):
 
-                    distributed_train_step(self.st_san, inp, tar)
+                    total_loss = distributed_train_step(self.st_san, inp, tar)
 
-                    if (batch + 1) % 100 == 0 and verbose_train:
+                    with summary_writer.as_default():
+                        tf.summary.scalar("loss", total_loss, step=batch + 1)
+
+                    if (batch + 1) % 100 == 0 and self.args.verbose_train:
                         print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
                             epoch + 1,
                             batch + 1,
@@ -603,7 +573,7 @@ class ModelTrainer:
                             train_inflow_mae.result(),
                             train_outflow_mae.result()))
 
-                if verbose_train:
+                if self.args.verbose_train:
                     template = 'Epoch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
                         epoch + 1,
                         train_inflow_rmse.result(),
@@ -631,11 +601,12 @@ class ModelTrainer:
                     print("Early stoping...")
                     ckpt.restore(ckpt_manager.checkpoints[0])
                     print('Checkpoint restored!! At epoch {}\n'.format(
-                        int(epoch - earlystop_patience_stream_t)))
+                        int(epoch - self.args.earlystop_patience_stsan)))
                     break
 
                 if reshuffle_helper.check(epoch):
-                    train_dataset, val_dataset = self.dataset_generator.load_dataset('train', load_saved_data, strategy)
+                    train_dataset, val_dataset = self.dataset_generator.load_dataset('train', self.args.load_saved_data,
+                                                                                     strategy)
 
                 print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
