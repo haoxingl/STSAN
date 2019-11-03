@@ -90,12 +90,11 @@ class DataLoader:
             transition_inputs_curr = []  # transition inputs of current day
             ex_inputs_curr = []  # external knowledge inputs of current day
 
-            assert num_weeks_hist >= 0
+            assert num_weeks_hist >= 0 and num_days_hist >= 1
             """ set the start time interval to sample the data"""
-            if num_weeks_hist == 0:
-                time_start = num_days_hist * self.parameters.time_interval_daily + num_intervals_before_predict
-            else:
-                time_start = num_weeks_hist * 7 * self.parameters.time_interval_daily + num_intervals_before_predict
+            s1 = num_days_hist * self.parameters.time_interval_daily + num_intervals_before_predict
+            s2 = num_weeks_hist * 7 * self.parameters.time_interval_daily + num_intervals_before_predict
+            time_start = max(s1, s2)
             time_end = flow_data.shape[0]
 
             for t in range(time_start, time_end):
