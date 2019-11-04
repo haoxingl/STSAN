@@ -261,6 +261,7 @@ class ModelTrainer:
             earlystop_helper = EarlystopHelper(self.earlystop_patiences_1, self.earlystop_thres_1)
             reshuffle_helper = ReshuffleHelper(self.earlystop_patiences_1[1], self.reshuffle_thres_stream_t)
             summary_writer = tf.summary.create_file_writer('./tensorboard/stream_t/{}'.format(self.model_index))
+            step_cnt = 0
             for epoch in range(self.args.MAX_EPOCH):
 
                 start = time.time()
@@ -274,8 +275,9 @@ class ModelTrainer:
 
                     total_loss = distributed_train_step(self.stream_t, inp, tar)
 
+                    step_cnt += 1
                     with summary_writer.as_default():
-                        tf.summary.scalar("loss", total_loss, step=batch + 1)
+                        tf.summary.scalar("loss", total_loss, step=step_cnt)
 
                     if (batch + 1) % 100 == 0 and self.args.verbose_train:
                         print(
@@ -548,6 +550,7 @@ class ModelTrainer:
                                                out_weight=0.7)
             reshuffle_helper = ReshuffleHelper(self.earlystop_patiences_2[1], self.reshuffle_thres_stsan)
             summary_writer = tf.summary.create_file_writer('./tensorboard/st_san/{}'.format(self.model_index))
+            step_cnt = 0
             for epoch in range(self.args.MAX_EPOCH):
 
                 start = time.time()
@@ -561,8 +564,9 @@ class ModelTrainer:
 
                     total_loss = distributed_train_step(self.st_san, inp, tar)
 
+                    step_cnt += 1
                     with summary_writer.as_default():
-                        tf.summary.scalar("loss", total_loss, step=batch + 1)
+                        tf.summary.scalar("loss", total_loss, step=step_cnt)
 
                     if (batch + 1) % 100 == 0 and self.args.verbose_train:
                         print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(

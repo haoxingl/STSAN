@@ -1,4 +1,6 @@
 figures/*
+checkpoints/*
+tensorboard/*
 .DS_Store
 .idea/*
 data/*

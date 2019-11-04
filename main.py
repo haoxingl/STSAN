@@ -7,7 +7,7 @@ import shutil
 parser = argparse.ArgumentParser(description='Hyperparameters')
 parser.add_argument('--dataset', default='taxi', help='taxi or bike')
 parser.add_argument('--gpu_ids', default='0, 1, 2, 3, 4, 5, 6, 7', help='indexes of gpus to use')
-parser.add_argument('--model_index', default=[1, 2], help='indexes of model to be trained')
+parser.add_argument('--model_indexes', default=[1, 2], help='indexes of model to be trained')
 
 """ Model hyperparameters """
 parser.add_argument('--num_layers', default=4, help='num of self-attention layers')
@@ -70,15 +70,15 @@ assert args.dataset == 'taxi' or args.dataset == 'bike'
 from ModelTrainer import ModelTrainer
 
 if __name__ == "__main__":
-    for index in range(args.model_index[0], args.model_index[1]):
-        print('Model index: {}'.format(index))
+    for index in range(args.model_indexes[0], args.model_indexes[1]):
         model_index = args.dataset + '_{}'.format(index)
+        print('Model index: {}'.format(model_index))
         if args.remove_old_files:
             try:
                 shutil.rmtree('./checkpoints/stream_t/{}'.format(model_index), ignore_errors=True)
                 shutil.rmtree('./checkpoints/st_san/{}'.format(model_index), ignore_errors=True)
-                shutil.rmtree('./results/stream_t/{}'.format(model_index), ignore_errors=True)
-                shutil.rmtree('./results/st_san/{}'.format(model_index), ignore_errors=True)
+                os.remove('./results/stream_t/{}.txt'.format(model_index))
+                os.remove('./results/st_san/{}.txt'.format(model_index))
                 shutil.rmtree('./tensorboard/stream_t/{}'.format(model_index), ignore_errors=True)
                 shutil.rmtree('./tensorboard/st_san/{}'.format(model_index), ignore_errors=True)
             except:

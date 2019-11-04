@@ -343,12 +343,9 @@ class ST_SAN(tf.keras.Model):
         self.final_layer = Masked_Fusion('Masked_Fusion', d_final, dropout_rate)
 
     def call(self, flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr, training):
-        flow = tf.concat([flow_hist, flow_curr], axis=-2)
-        trans = tf.concat([trans_hist, trans_curr], axis=-2)
-        ex = tf.concat([ex_hist, ex_curr], axis=-2)
-        flow_enc_inputs = flow[:, :, :, :-1, :]
-        trans_enc_inputs = trans[:, :, :, :-1, :]
-        ex_enc_inputs = ex[:, :-1, :]
+        flow_enc_inputs = tf.concat([flow_hist, flow_curr[:, :, :, 1:, :]], axis=-2)
+        trans_enc_inputs = tf.concat([trans_hist, trans_curr[:, :, :, 1:, :]], axis=-2)
+        ex_enc_inputs = tf.concat([ex_hist, ex_curr[:, 1:, :]], axis=-2)
 
         flow_dec_input = flow_curr[:, :, :, -1:, :]
         trans_dec_input = trans_curr[:, :, :, -1:, :]
