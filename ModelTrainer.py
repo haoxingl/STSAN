@@ -223,7 +223,7 @@ class ModelTrainer:
 
                 if verbose:
                     if not testing:
-                        template = 'Epoch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}\n'.format(
+                        template = 'Epoch {} RMSE_IN_1 {:.6f} RMSE_IN_2 {:.6f} RMSE_OUT_1 {:.6f} RMSE_OUT_2 {:.6f}\n\n'.format(
                             epoch + 1,
                             test_rmse_in_trans_1.result(),
                             test_rmse_in_trans_2.result(),
@@ -514,11 +514,11 @@ class ModelTrainer:
 
                 if verbose:
                     if not testing:
-                        template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n'.format(
+                        template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n\n'.format(
                             epoch + 1, test_inflow_rmse.result(), test_outflow_rmse.result(), test_inflow_mae.result(),
                             test_outflow_mae.result())
                         write_result(result_output_path,
-                                     'Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template + '\n')
+                                     'Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template)
                         print(template)
                     else:
                         template = 'Final results: INFLOW_RMSE {:.2f}({:.6f}) OUTFLOW_RMSE {:.2f}({:.6f}) INFLOW_MAE {:.2f}({:.6f}) OUTFLOW_MAE {:.2f}({:.6f})\n'.format(
