@@ -300,10 +300,10 @@ class Stream_T(Model):
              look_ahead_mask=None,
              dec_padding_mask=None):
         # concat all historical data to form the encoder input
-        x = tf.concat([x_hist, x_curr], axis=-2)
-        ex = tf.concat([ex_hist, ex_curr], axis=-2)
-        x_enc_inputs = x[:, :, :, :-1, :]
-        ex_enc_inputs = ex[:, :-1, :]
+        x_enc_inputs = tf.concat([x_hist, x_curr[:, :, :, 1:, :]], axis=-2)
+        ex_enc_inputs = tf.concat([ex_hist, ex_curr[:, 1:, :]], axis=-2)
+        # x_enc_inputs = x[:, :, :, :-1, :]
+        # ex_enc_inputs = ex[:, :-1, :]
 
         # use the last interval as the decoder output
         x_dec_input = x_curr[:, :, :, -1:, :]
@@ -323,7 +323,7 @@ class Stream_T(Model):
         return final_output, attention_weights
 
 
-class ST_SAN(tf.keras.Model):
+class ST_SAN(Model):
     def __init__(self, stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals, d_final,
                  dropout_rate):
         super(ST_SAN, self).__init__()

@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow import math
 
+
 class RMSE(tf.keras.metrics.Mean):
     def __init__(self, name='RMSE', dtype=tf.float32):
         super(RMSE, self).__init__(name, dtype=dtype)
@@ -13,6 +14,7 @@ class RMSE(tf.keras.metrics.Mean):
 
     def result(self):
         return math.sqrt(math.divide_no_nan(self.total, self.count))
+
 
 class MAE(tf.keras.metrics.Mean):
     def __init__(self, name='MAE', dtype=tf.float32):
