@@ -7,7 +7,7 @@ import shutil
 parser = argparse.ArgumentParser(description='Hyperparameters')
 parser.add_argument('--dataset', default='taxi', help='taxi or bike')
 parser.add_argument('--gpu_ids', default='0, 1, 2, 3, 4, 5, 6, 7', help='indexes of gpus to use')
-parser.add_argument('--model_indexes', default=[1, 2], help='indexes of model to be trained')
+parser.add_argument('--model_indexes', default=[2, 3], help='indexes of model to be trained')
 
 """ Model hyperparameters """
 parser.add_argument('--num_layers', default=4, help='num of self-attention layers')
@@ -27,6 +27,8 @@ parser.add_argument('--earlystop_patience_stream_t', default=10)
 parser.add_argument('--earlystop_patience_stsan', default=15)
 parser.add_argument('--warmup_steps', default=4000)
 parser.add_argument('--verbose_train', default=1)
+parser.add_argument('--in_weight', default=0.4)
+parser.add_argument('--out_weight', default=0.6)
 
 """ Data hyperparameters """
 num_weeks_hist = 0
@@ -35,7 +37,7 @@ num_intervals_hist = 3
 num_intervals_curr = 1
 num_intervals_before_predict = 1
 num_intervals_enc = (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_curr
-parser.add_argument('--load_saved_data', default=False)
+parser.add_argument('--load_saved_data', default=True)
 parser.add_argument('--num_weeks_hist', default=num_weeks_hist, help='num of previous weeks to consider')
 parser.add_argument('--num_days_hist', default=num_days_hist, help='num of previous days to consider')
 parser.add_argument('--num_intervals_hist', default=num_intervals_hist, help='num of time in previous days to consider')
@@ -76,10 +78,26 @@ if __name__ == "__main__":
         if args.remove_old_files:
             try:
                 shutil.rmtree('./checkpoints/stream_t/{}'.format(model_index), ignore_errors=True)
+
+            except:
+                pass
+            try:
                 shutil.rmtree('./checkpoints/st_san/{}'.format(model_index), ignore_errors=True)
+            except:
+                pass
+            try:
                 os.remove('./results/stream_t/{}.txt'.format(model_index))
+            except:
+                pass
+            try:
                 os.remove('./results/st_san/{}.txt'.format(model_index))
+            except:
+                pass
+            try:
                 shutil.rmtree('./tensorboard/stream_t/{}'.format(model_index), ignore_errors=True)
+            except:
+                pass
+            try:
                 shutil.rmtree('./tensorboard/st_san/{}'.format(model_index), ignore_errors=True)
             except:
                 pass
