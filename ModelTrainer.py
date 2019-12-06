@@ -21,7 +21,7 @@ from utils.CustomSchedule import CustomSchedule
 from utils.EarlystopHelper import EarlystopHelper
 from utils.ReshuffleHelper import ReshuffleHelper
 from models import Stream_T, ST_SAN
-from utils.utils import DatasetGenerator, write_result
+from utils.utils import DatasetGenerator, write_result, create_masks
 from utils.Metrics import MAE
 
 """ use mirrored strategy for distributed training """
@@ -126,12 +126,20 @@ class ModelTrainer:
 
                 ys_transitions = tar["ys_transitions"]
 
+                x_enc_inputs = tf.concat([x_hist, x_curr[:, :, :, 1:, :]], axis=-2)
+                x_dec_inputs = x_curr[:, :, :, -1:, :]
+
+                enc_padding_mask, combined_mask, dec_padding_mask = create_masks(x_enc_inputs, x_dec_inputs)
+
                 with tf.GradientTape() as tape:
                     predictions, _ = stream_t(x_hist,
                                               ex_hist,
                                               x_curr,
                                               ex_curr,
-                                              training=True)
+                                              True,
+                                              enc_padding_mask,
+                                              combined_mask,
+                                              dec_padding_mask)
                     loss = loss_function(ys_transitions, predictions)
 
                 gradients = tape.gradient(loss, stream_t.trainable_variables)
@@ -152,7 +160,13 @@ class ModelTrainer:
 
                 ys_transitions = tar["ys_transitions"]
 
-                predictions, _ = stream_t(x_hist, ex_hist, x_curr, ex_curr, training=False)
+                x_enc_inputs = tf.concat([x_hist, x_curr[:, :, :, 1:, :]], axis=-2)
+                x_dec_inputs = x_curr[:, :, :, -1:, :]
+
+                enc_padding_mask, combined_mask, dec_padding_mask = create_masks(x_enc_inputs, x_dec_inputs)
+
+                predictions, _ = stream_t(x_hist, ex_hist, x_curr, ex_curr, False,
+                                          enc_padding_mask, combined_mask, dec_padding_mask)
 
                 """ here we filter out all nodes where their real flows are less than 10 """
                 real_1 = ys_transitions[:, :, :, 0]
@@ -423,6 +437,14 @@ class ModelTrainer:
 
                 ys = tar["ys"]
 
+                f_enc_inputs = tf.concat([flow_hist, flow_curr[:, :, :, 1:, :]], axis=-2)
+                f_dec_inputs = flow_curr[:, :, :, -1:, :]
+                t_enc_inputs = tf.concat([trans_hist, trans_curr[:, :, :, 1:, :]], axis=-2)
+                t_dec_inputs = trans_curr[:, :, :, -1:, :]
+
+                enc_padding_mask_f, combined_mask_f, dec_padding_mask_f = create_masks(f_enc_inputs, f_dec_inputs)
+                enc_padding_mask_t, combined_mask_t, dec_padding_mask_t = create_masks(t_enc_inputs, t_dec_inputs)
+
                 with tf.GradientTape() as tape:
                     predictions, _ = st_san(flow_hist,
                                             trans_hist,
@@ -430,7 +452,10 @@ class ModelTrainer:
                                             flow_curr,
                                             trans_curr,
                                             ex_curr,
-                                            training=True)
+                                            True,
+                                            [enc_padding_mask_f, enc_padding_mask_t],
+                                            [combined_mask_f, combined_mask_t],
+                                            [dec_padding_mask_f, dec_padding_mask_t])
                     loss = loss_function(ys, predictions)
 
                 gradients = tape.gradient(loss, st_san.trainable_variables)
@@ -453,8 +478,18 @@ class ModelTrainer:
 
                 ys = tar["ys"]
 
-                predictions, _ = st_san(flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr,
-                                        training=False)
+                f_enc_inputs = tf.concat([flow_hist, flow_curr[:, :, :, 1:, :]], axis=-2)
+                f_dec_inputs = flow_curr[:, :, :, -1:, :]
+                t_enc_inputs = tf.concat([trans_hist, trans_curr[:, :, :, 1:, :]], axis=-2)
+                t_dec_inputs = trans_curr[:, :, :, -1:, :]
+
+                enc_padding_mask_f, combined_mask_f, dec_padding_mask_f = create_masks(f_enc_inputs, f_dec_inputs)
+                enc_padding_mask_t, combined_mask_t, dec_padding_mask_t = create_masks(t_enc_inputs, t_dec_inputs)
+
+                predictions, _ = st_san(flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr, False,
+                                        [enc_padding_mask_f, enc_padding_mask_t],
+                                        [combined_mask_f, combined_mask_t],
+                                        [dec_padding_mask_f, dec_padding_mask_t])
 
                 """ here we filter out all nodes where their real flows are less than 10 """
                 real_in = ys[:, 0]

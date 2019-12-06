@@ -342,7 +342,8 @@ class ST_SAN(Model):
 
         self.final_layer = Masked_Fusion('Masked_Fusion', d_final, dropout_rate)
 
-    def call(self, flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr, training):
+    def call(self, flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr, training,
+             enc_padding_mask=None, combined_mask=None, dec_padding_mask=None):
         flow_enc_inputs = tf.concat([flow_hist, flow_curr[:, :, :, 1:, :]], axis=-2)
         trans_enc_inputs = tf.concat([trans_hist, trans_curr[:, :, :, 1:, :]], axis=-2)
         ex_enc_inputs = tf.concat([ex_hist, ex_curr[:, 1:, :]], axis=-2)
@@ -351,12 +352,13 @@ class ST_SAN(Model):
         trans_dec_input = trans_curr[:, :, :, -1:, :]
         ex_dec_input = ex_curr[:, -1:, :]
 
-        enc_output_flow = self.flow_encoder(flow_enc_inputs, ex_enc_inputs, training, None)
-        enc_output_trans = self.trans_encoder(trans_enc_inputs, ex_enc_inputs, False, None)
+        enc_output_flow = self.flow_encoder(flow_enc_inputs, ex_enc_inputs, training, enc_padding_mask[0])
+        enc_output_trans = self.trans_encoder(trans_enc_inputs, ex_enc_inputs, False, enc_padding_mask[1])
 
         dec_output_flow, attention_weights_t = self.flow_decoder(flow_dec_input, ex_dec_input, enc_output_flow,
-                                                                 training, None, None)
-        dec_output_trans, _ = self.trans_decoder(trans_dec_input, ex_dec_input, enc_output_trans, False, None, None)
+                                                                 training, combined_mask[0], dec_padding_mask[0])
+        dec_output_trans, _ = self.trans_decoder(trans_dec_input, ex_dec_input, enc_output_trans, False,
+                                                 combined_mask[1], dec_padding_mask[1])
 
         final_output = self.final_layer(dec_output_flow, dec_output_trans, training)
 

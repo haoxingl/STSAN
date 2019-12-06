@@ -113,3 +113,17 @@ class DatasetGenerator:
 def write_result(path, str):
     with open(path, 'a+') as file:
         file.write(str)
+
+
+def create_padding_mask(inp):
+    inp = tf.math.reduce_sum(inp, axis=-1)
+    inp = tf.cast(tf.math.equal(inp, 0), tf.float32)
+    return inp[:, :, :, tf.newaxis, tf.newaxis, :]
+
+
+def create_masks(inp, tar):
+    enc_padding_mask = create_padding_mask(inp)
+    dec_padding_mask = create_padding_mask(inp)
+    combined_mask = create_padding_mask(tar)
+
+    return enc_padding_mask, combined_mask, dec_padding_mask
