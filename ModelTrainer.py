@@ -369,8 +369,8 @@ class ModelTrainer:
             test_inflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
             test_outflow_rmse = tf.keras.metrics.RootMeanSquaredError(dtype=tf.float32)
 
-            train_inflow_mae = MAE()
-            train_outflow_mae = MAE()
+            # train_inflow_mae = MAE()
+            # train_outflow_mae = MAE()
             test_inflow_mae = MAE()
             test_outflow_mae = MAE()
 
@@ -463,12 +463,12 @@ class ModelTrainer:
 
                 train_inflow_rmse(ys[:, 0], predictions[:, 0])
                 train_outflow_rmse(ys[:, 1], predictions[:, 1])
-                train_inflow_mae(ys[:, 0], predictions[:, 0])
-                train_outflow_mae(ys[:, 1], predictions[:, 1])
+                # train_inflow_mae(ys[:, 0], predictions[:, 0])
+                # train_outflow_mae(ys[:, 1], predictions[:, 1])
 
                 return loss
 
-            def test_step(st_san, inp, tar, threshold):
+            def test_step(st_san, inp, tar, threshold, testing=False):
                 flow_hist = inp["flow_hist"]
                 trans_hist = inp["trans_hist"]
                 ex_hist = inp["ex_hist"]
@@ -504,34 +504,35 @@ class ModelTrainer:
                 masked_pred_out = tf.gather_nd(pred_out, mask_out)
                 test_inflow_rmse(masked_real_in, masked_pred_in)
                 test_outflow_rmse(masked_real_out, masked_pred_out)
-                test_inflow_mae(masked_real_in, masked_pred_in)
-                test_outflow_mae(masked_real_out, masked_pred_out)
+                if testing:
+                    test_inflow_mae(masked_real_in, masked_pred_in)
+                    test_outflow_mae(masked_real_out, masked_pred_out)
 
             @tf.function(experimental_relax_shapes=True)
-            def distributed_test_step(st_san, inp, tar, threshold):
-                return strategy.experimental_run_v2(test_step, args=(st_san, inp, tar, threshold,))
+            def distributed_test_step(st_san, inp, tar, threshold, testing):
+                return strategy.experimental_run_v2(test_step, args=(st_san, inp, tar, threshold, testing,))
 
             def evaluate(st_san, eval_dataset, flow_max, epoch, verbose=1, testing=False):
                 threshold = 10 / flow_max
 
                 test_inflow_rmse.reset_states()
                 test_outflow_rmse.reset_states()
-                test_inflow_mae.reset_states()
-                test_outflow_mae.reset_states()
+                # test_inflow_mae.reset_states()
+                # test_outflow_mae.reset_states()
 
                 for (batch, (inp, tar)) in enumerate(eval_dataset):
 
-                    distributed_test_step(st_san, inp, tar, threshold)
+                    distributed_test_step(st_san, inp, tar, threshold, testing)
 
                     if verbose and (batch + 1) % 100 == 0:
                         if not testing:
                             print(
-                                "Epoch {} Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}".format(
+                                "Epoch {} Batch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f}".format(
                                     epoch + 1, batch + 1,
                                     test_inflow_rmse.result(),
                                     test_outflow_rmse.result(),
-                                    test_inflow_mae.result(),
-                                    test_outflow_mae.result()
+                                    # test_inflow_mae.result(),
+                                    # test_outflow_mae.result()
                                 ))
                         else:
                             print(
@@ -549,9 +550,11 @@ class ModelTrainer:
 
                 if verbose:
                     if not testing:
-                        template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f} INFLOW_MAE {:.6f} OUTFLOW_MAE {:.6f}\n\n'.format(
-                            epoch + 1, test_inflow_rmse.result(), test_outflow_rmse.result(), test_inflow_mae.result(),
-                            test_outflow_mae.result())
+                        template = 'Epoch {} INFLOW_RMSE {:.6f} OUTFLOW_RMSE {:.6f}\n\n'.format(
+                            epoch + 1,
+                            test_inflow_rmse.result(),
+                            test_outflow_rmse.result()
+                        )
                         write_result(result_output_path,
                                      'Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n' + template)
                         print(template)
@@ -564,11 +567,10 @@ class ModelTrainer:
                             test_inflow_mae.result() * flow_max,
                             test_inflow_mae.result(),
                             test_outflow_mae.result() * flow_max,
-                            test_outflow_mae.result())
+                            test_outflow_mae.result()
+                        )
                         write_result(result_output_path, template)
                         print(template)
-
-                return test_inflow_rmse.result(), test_outflow_rmse.result()
 
             @tf.function(experimental_relax_shapes=True)
             def distributed_train_step(st_san, inp, tar):
@@ -581,8 +583,7 @@ class ModelTrainer:
             write_result(result_output_path, "Start training:\n")
             earlystop_flag = False
             check_flag = False
-            earlystop_helper = EarlystopHelper(self.earlystop_patiences_2, self.earlystop_thres_2, in_weight=0.3,
-                                               out_weight=0.7)
+            earlystop_helper = EarlystopHelper(self.earlystop_patiences_2, self.earlystop_thres_2)
             reshuffle_helper = ReshuffleHelper(self.earlystop_patiences_2[1], self.reshuffle_thres_stsan)
             summary_writer = tf.summary.create_file_writer('./tensorboard/st_san/{}'.format(self.model_index))
             step_cnt = 0
@@ -592,8 +593,8 @@ class ModelTrainer:
 
                 train_inflow_rmse.reset_states()
                 train_outflow_rmse.reset_states()
-                train_inflow_mae.reset_states()
-                train_outflow_mae.reset_states()
+                # train_inflow_mae.reset_states()
+                # train_outflow_mae.reset_states()
 
                 for (batch, (inp, tar)) in enumerate(train_dataset):
 
@@ -604,25 +605,28 @@ class ModelTrainer:
                         tf.summary.scalar("loss", total_loss, step=step_cnt)
 
                     if (batch + 1) % 100 == 0 and self.args.verbose_train:
-                        print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
+                        print('Epoch {} Batch {} in_RMSE {:.6f} out_RMSE {:.6f}'.format(
                             epoch + 1,
                             batch + 1,
                             train_inflow_rmse.result(),
-                            train_outflow_rmse.result(),
-                            train_inflow_mae.result(),
-                            train_outflow_mae.result()))
+                            train_outflow_rmse.result()
+                        ))
+                            # train_inflow_mae.result(),
+                            # train_outflow_mae.result()))
 
                 if self.args.verbose_train:
-                    template = 'Epoch {} in_RMSE {:.6f} out_RMSE {:.6f} in_MAE {:.6f} out_MAE {:.6f}'.format(
+                    template = 'Epoch {} in_RMSE {:.6f} out_RMSE {:.6f}'.format(
                         epoch + 1,
                         train_inflow_rmse.result(),
-                        train_outflow_rmse.result(),
-                        train_inflow_mae.result(),
-                        train_outflow_mae.result())
+                        train_outflow_rmse.result()
+                    )
+                        # train_inflow_mae.result(),
+                        # train_outflow_mae.result())
                     print(template)
                     write_result(result_output_path, template + '\n')
 
-                eval_rmse = (train_inflow_rmse.result() + train_outflow_rmse.result()) / 2
+                eval_rmse = train_inflow_rmse.result() * self.args.in_weight \
+                            + train_outflow_rmse.result() * self.args.out_weight
 
                 if check_flag == False and earlystop_helper.refresh_status(eval_rmse):
                     check_flag = True
@@ -630,8 +634,10 @@ class ModelTrainer:
                 if check_flag:
                     print(
                         "Validation Result (after Min-Max Normalization, filtering out grids with flow less than consideration threshold): ")
-                    in_rmse_value, out_rmse_value = evaluate(self.st_san, val_dataset, self.flow_max, epoch)
-                    earlystop_flag = earlystop_helper.check(in_rmse_value + out_rmse_value, epoch)
+                    evaluate(self.st_san, val_dataset, self.flow_max, epoch)
+                    test_rmse = test_inflow_rmse.result() * self.args.in_weight \
+                            + test_outflow_rmse.result() * self.args.out_weight
+                    earlystop_flag = earlystop_helper.check(test_rmse, epoch)
 
                 ckpt_save_path = ckpt_manager.save()
                 print('Saving checkpoint for epoch {} at {}\n'.format(epoch + 1, ckpt_save_path))
@@ -653,4 +659,4 @@ class ModelTrainer:
                 "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):")
             write_result(result_output_path,
                          "Start testing (without Min-Max Normalization, filtering out grids with flow less than consideration threshold):\n")
-            _, _ = evaluate(self.st_san, test_dataset, self.flow_max, epoch, testing=True)
+            evaluate(self.st_san, test_dataset, self.flow_max, epoch, testing=True)
