@@ -25,9 +25,9 @@ if gpus:
   except RuntimeError as e:
     print(e)
 
-dataset = 'taxi'
+dataset = 'bike'
 verbose = 0
-num_slots_curr = 12
+num_slots_curr = 3
 output_size = 2
 
 saved_data = False
@@ -128,7 +128,6 @@ def var(flow, target):
 
 
 def mlp(x_train, y_train, x_test, y_test):
-    half_size = int(x_train.shape[2] *  x_train.shape[1] / 2)
     early_stop = CustomStopper(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min', start_epoch=5)
 
     model = models.Sequential(

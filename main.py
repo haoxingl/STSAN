@@ -7,7 +7,7 @@ import shutil
 parser = argparse.ArgumentParser(description='Hyperparameters')
 parser.add_argument('--dataset', default='taxi', help='taxi or bike')
 parser.add_argument('--gpu_ids', default='0, 1, 2, 3, 4, 5, 6, 7', help='indexes of gpus to use')
-parser.add_argument('--model_indexes', default=[2, 3], help='indexes of model to be trained')
+parser.add_argument('--model_indexes', default=[1, 2], help='indexes of model to be trained')
 
 """ Model hyperparameters """
 parser.add_argument('--num_layers', default=4, help='num of self-attention layers')
