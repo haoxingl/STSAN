@@ -37,7 +37,7 @@ num_intervals_hist = 3
 num_intervals_curr = 1
 num_intervals_before_predict = 1
 num_intervals_enc = (num_weeks_hist + num_days_hist) * num_intervals_hist + num_intervals_curr
-parser.add_argument('--load_saved_data', default=True)
+parser.add_argument('--load_saved_data', default=False)
 parser.add_argument('--num_weeks_hist', default=num_weeks_hist, help='num of previous weeks to consider')
 parser.add_argument('--num_days_hist', default=num_days_hist, help='num of previous days to consider')
 parser.add_argument('--num_intervals_hist', default=num_intervals_hist, help='num of time in previous days to consider')
