@@ -1,84 +1,115 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, Model, Sequential
-
-final_cnn_filters = 128
-
-""" the local convolutional layer before the encoder and deconder stacks """
+from tensorflow.keras.utils import get_custom_objects
 
 
-class Local_Conv(layers.Layer):
-    def __init__(self, num_layers, num_filters, num_intervals, dropout_rate=0.1):
-        super(Local_Conv, self).__init__()
-
-        self.num_intervals = num_intervals  # indicate how many time intervals are included in the historical inputs
-        self.num_layers = num_layers
-
-        """ data from each time interval will be handled by one set of convolutional layers, therefore totally
-            totally num_intervals sets of convolutional layers are employed """
-        self.conv_layers = [[layers.Conv2D(num_filters, (3, 3), activation='relu', padding='same')
-                             for _ in range(num_layers)] for _ in range(num_intervals)]
-
-        self.dropout_layers = [layers.Dropout(dropout_rate) for _ in range(num_intervals)]
-
-    def call(self, inputs, training):
-        outputs = []
-        for i in range(self.num_intervals):
-            input = inputs[:, :, :, i, :]
-            output = self.conv_layers[i][0](input)
-            for j in range(self.num_layers - 1):
-                output = self.conv_layers[i][j + 1](output)
-            output = self.dropout_layers[i](output, training=training)
-            output = tf.expand_dims(output, axis=3)
-            outputs.append(output)
-
-        output_final = tf.concat(outputs, axis=3)
-
-        return output_final
+def gelu(x):
+    return 0.5 * x * (1 + tf.tanh(tf.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3))))
 
 
-""" the implementation of the Masked Fusion mechanism, check the details in my paper """
+get_custom_objects().update({'gelu': layers.Activation(gelu)})
+
+act = 'gelu'
 
 
-class Masked_Fusion(layers.Layer):
-    def __init__(self, name, d_final, dropout_rate=0.1):
-        super(Masked_Fusion, self).__init__(name=name)
+def get_angles(pos, i, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (i // 2)) / np.float32(d_model))
+    return pos * angle_rates
 
-        self.sigact_layers = [layers.Activation('sigmoid') for _ in range(3)]
 
-        self.conv_layers_flow = [layers.Conv2D(final_cnn_filters, (3, 3), activation='relu') for i in range(2)]
-        self.conv_layers_trans = [layers.Conv2D(final_cnn_filters, (3, 3), activation='relu') for i in range(2)]
+def spatial_posenc(position_r, position_c, d_model):
+    angle_rads_r = get_angles(position_r, np.arange(d_model)[np.newaxis, :], d_model)
 
-        self.dense1 = layers.Dense(d_final, activation='relu')
-        self.dense2 = layers.Dense(2, activation='tanh')
+    angle_rads_c = get_angles(position_c, np.arange(d_model)[np.newaxis, :], d_model)
 
-        self.flatten = layers.Flatten()
-        self.dropout = layers.Dropout(dropout_rate)
+    pos_encoding = np.zeros(angle_rads_r.shape, dtype=np.float32)
 
-    def call(self, input_flow, input_trans, training):
-        input_flow = tf.squeeze(input_flow, axis=-2)
-        input_trans = tf.squeeze(input_trans, axis=-2)
+    pos_encoding[:, 0::2] = np.sin(angle_rads_r[:, 0::2])
 
-        input_flow *= self.sigact_layers[0](input_trans)
+    pos_encoding[:, 1::2] = np.cos(angle_rads_c[:, 1::2])
 
-        flow_output1 = self.conv_layers_flow[0](input_flow)
-        trans_output1 = self.conv_layers_trans[0](input_trans)
-        flow_output1 *= self.sigact_layers[1](trans_output1)
+    return tf.cast(pos_encoding[np.newaxis, ...], dtype=tf.float32)
 
-        flow_output2 = self.conv_layers_flow[1](flow_output1)
-        trans_output2 = self.conv_layers_trans[1](trans_output1)
-        flow_output3 = flow_output2 * self.sigact_layers[2](trans_output2)
 
-        output = self.flatten(flow_output3)
-        output = self.dense1(output)
-        output = self.dropout(output, training=training)
-        output = self.dense2(output)
+def get_spe(l_half, d_model):
+    l_full = 2 * l_half + 1
+
+    mtx_r = np.repeat(np.arange(l_full)[:, np.newaxis], [l_full], axis=1)
+    mtx_c = np.repeat(np.arange(l_full)[np.newaxis, :], [l_full], axis=0)
+
+    mtx_r_flat = np.reshape(mtx_r - l_half, (-1, 1))
+    mtx_c_flat = np.reshape(mtx_c - l_half, (-1, 1))
+
+    spe = spatial_posenc(mtx_r_flat, mtx_c_flat, d_model)
+    spe = np.reshape(spe, (l_full, l_full, d_model))
+
+    return np.array(spe, dtype=np.float32)
+
+
+class Convs(layers.Layer):
+    def __init__(self, n_layer, n_filter, l_hist, r_d=0.1):
+        super(Convs, self).__init__()
+
+        self.n_layer = n_layer
+        self.l_hist = l_hist
+
+        self.convs = [[layers.Conv2D(n_filter, (3, 3), activation=act, padding='same')
+                       for _ in range(l_hist)] for _ in range(n_layer)]
+        self.dropouts = [[layers.Dropout(r_d) for _ in range(l_hist)] for _ in range(n_layer)]
+
+    def call(self, inps, training):
+        outputs = tf.split(inps, self.l_hist, axis=-2)
+        for i in range(self.n_layer):
+            for j in range(self.l_hist):
+                if i == 0:
+                    outputs[j] = tf.squeeze(outputs[j], axis=-2)
+                outputs[j] = self.convs[i][j](outputs[j])
+                outputs[j] = self.dropouts[i][j](outputs[j], training=training)
+                if i == self.n_layer - 1:
+                    outputs[j] = tf.expand_dims(outputs[j], axis=-2)
+
+        output = tf.concat(outputs, axis=-2)
 
         return output
 
 
-def scaled_dot_product_attention(q, k, v, mask):
+class Gated_Fusion(layers.Layer):
+    def __init__(self, conv_filter, conv_layer, r_d=0.1):
+        super(Gated_Fusion, self).__init__(name='final_f')
+
+        self.conv_layer = conv_layer
+
+        self.sigs = [layers.Activation('sigmoid') for _ in range(2)]
+
+        self.convs_f = [layers.Conv2D(conv_filter, (3, 3), activation=act) for _ in range(conv_layer)]
+        self.convs_t = [layers.Conv2D(conv_filter, (3, 3), activation=act) for _ in range(conv_layer - 1)]
+
+        self.dense = layers.Dense(2, activation='tanh')
+
+        self.dropouts_f = [layers.Dropout(r_d) for _ in range(conv_layer - 1)]
+        self.dropouts_t = [layers.Dropout(r_d) for _ in range(conv_layer - 1)]
+        self.dropout = layers.Dropout(r_d)
+
+    def call(self, inp_f, inp_t, training):
+        output_f = tf.squeeze(inp_f, axis=-2)
+        output_t = tf.squeeze(inp_t, axis=-2)
+
+        for i in range(self.conv_layer - 1):
+            output_t = self.convs_t[i](output_t)
+            output_f = self.convs_f[i](output_f) * self.sigs[i](output_t)
+            output_t = self.dropouts_t[i](output_t, training=training)
+            output_f = self.dropouts_f[i](output_f, training=training)
+
+        output_f = tf.squeeze(self.convs_f[-1](output_f))
+        output = self.dense(self.dropout(output_f))
+
+        return output
+
+
+def scaled_dot_product_attention(q, k, v, mask=None):
     matmul_qk = tf.matmul(q, k, transpose_b=True)
 
     dk = tf.cast(tf.shape(k)[-1], tf.float32)
@@ -94,74 +125,80 @@ def scaled_dot_product_attention(q, k, v, mask):
     return output, attention_weights
 
 
-""" the implementation of Spatial-Temporal Multi-Head Attention, detailed in my paper"""
-
-
-class SpatialTemporal_MultiHeadAttention(layers.Layer):
-    def __init__(self, d_model, num_heads):
-        super(SpatialTemporal_MultiHeadAttention, self).__init__()
-        self.num_heads = num_heads
+class MultiHeadAttention(layers.Layer):
+    def __init__(self, d_model, n_head, self_att=True):
+        super(MultiHeadAttention, self).__init__()
         self.d_model = d_model
+        self.n_head = n_head
+        self.self_att = self_att
 
-        assert d_model % self.num_heads == 0
+        assert d_model % n_head == 0
 
-        self.depth = d_model // self.num_heads
+        self.depth = d_model // n_head
 
-        self.wq = layers.Dense(d_model)
-        self.wk = layers.Dense(d_model)
-        self.wv = layers.Dense(d_model)
+        if self_att:
+            self.wx = layers.Dense(d_model * 3)
+        else:
+            self.wq = layers.Dense(d_model)
+            self.wkv = layers.Dense(d_model * 2)
 
-        self.dense = layers.Dense(d_model)
+        self.wo = layers.Dense(d_model)
 
-    def split_heads(self, x, batch_size):
-        x = tf.reshape(x, (batch_size, tf.shape(x)[1], tf.shape(x)[2], tf.shape(x)[3], self.num_heads, self.depth))
-        return tf.transpose(x, perm=[0, 1, 2, 4, 3, 5])
+    def split_heads(self, x):
+        shape = tf.shape(x)
+        x = tf.reshape(x, (shape[0], shape[1], shape[2], shape[3], self.n_head, self.depth))
+        return tf.transpose(x, perm=[0, 4, 1, 2, 3, 5])
 
     def call(self, v, k, q, mask):
-        batch_size = tf.shape(q)[0]
+        if self.self_att:
+            q, k, v = tf.split(self.wx(q), 3, axis=-1)
+        else:
+            q = self.wq(q)
+            k, v = tf.split(self.wkv(k), 2, axis=-1)
 
-        q = self.wq(q)
-        k = self.wk(k)
-        v = self.wv(v)
+        q = self.split_heads(q)
+        k = self.split_heads(k)
+        v = self.split_heads(v)
 
-        q = self.split_heads(q, batch_size)
-        k = self.split_heads(k, batch_size)
-        v = self.split_heads(v, batch_size)
+        scaled_attention, attention_weights = scaled_dot_product_attention(q, k, v, mask)
 
-        scaled_attention, attention_weights = scaled_dot_product_attention(
-            q, k, v, mask)
+        scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 3, 4, 1, 5])
 
-        scaled_attention = tf.transpose(scaled_attention,
-                                        perm=[0, 1, 2, 4, 3, 5])
+        d_shape = tf.shape(scaled_attention)
 
-        concat_attention = tf.reshape(scaled_attention,
-                                      (batch_size, tf.shape(scaled_attention)[1], tf.shape(scaled_attention)[2],
-                                       tf.shape(scaled_attention)[3], self.d_model))
+        concat_attention = tf.reshape(scaled_attention, (d_shape[0], d_shape[1], d_shape[2], d_shape[3], self.d_model))
 
-        output = self.dense(concat_attention)
+        output = self.wo(concat_attention)
 
         return output, attention_weights
 
 
 def point_wise_feed_forward_network(d_model, dff):
     return Sequential([
-        layers.Dense(dff, activation='relu'),
+        layers.Dense(dff, activation=act),
         layers.Dense(d_model)
     ])
 
 
+def ex_encoding(d_model, dff):
+    return Sequential([
+        layers.Dense(dff),
+        layers.Dense(d_model, activation='tanh')
+    ])
+
+
 class EncoderLayer(layers.Layer):
-    def __init__(self, d_model, num_heads, dff=128, dropout_rate=0.1):
+    def __init__(self, d_model, n_head, dff, r_d=0.1):
         super(EncoderLayer, self).__init__()
 
-        self.mha = SpatialTemporal_MultiHeadAttention(d_model, num_heads)
+        self.mha = MultiHeadAttention(d_model, n_head)
         self.ffn = point_wise_feed_forward_network(d_model, dff)
 
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
 
-        self.dropout1 = layers.Dropout(dropout_rate)
-        self.dropout2 = layers.Dropout(dropout_rate)
+        self.dropout1 = layers.Dropout(r_d)
+        self.dropout2 = layers.Dropout(r_d)
 
     def call(self, x, training, mask):
         attn_output, _ = self.mha(x, x, x, mask)
@@ -176,190 +213,158 @@ class EncoderLayer(layers.Layer):
 
 
 class DecoderLayer(layers.Layer):
-    def __init__(self, d_model, num_heads, dff=128, dropout_rate=0.1):
+    def __init__(self, d_model, n_head, dff, r_d=0.1):
         super(DecoderLayer, self).__init__()
 
-        self.mha1 = SpatialTemporal_MultiHeadAttention(d_model, num_heads)
-        self.mha2 = SpatialTemporal_MultiHeadAttention(d_model, num_heads)
+        self.mha1 = MultiHeadAttention(d_model, n_head)
+        self.mha2 = MultiHeadAttention(d_model, n_head, self_att=False)
+
         self.ffn = point_wise_feed_forward_network(d_model, dff)
 
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm3 = layers.LayerNormalization(epsilon=1e-6)
 
-        self.dropout1 = layers.Dropout(dropout_rate)
-        self.dropout2 = layers.Dropout(dropout_rate)
-        self.dropout3 = layers.Dropout(dropout_rate)
+        self.dropout1 = layers.Dropout(r_d)
+        self.dropout2 = layers.Dropout(r_d)
+        self.dropout3 = layers.Dropout(r_d)
 
-    def call(self, x, enc_output_x, training, look_ahead_mask, padding_mask):
+    def call(self, x, enc_output, training, look_ahead_mask, padding_mask):
         attn1, attn_weights_block1 = self.mha1(x, x, x, look_ahead_mask)
         attn1 = self.dropout1(attn1, training=training)
         out1 = self.layernorm1(attn1 + x)
 
-        attn2, attn_weights_block2 = self.mha2(enc_output_x, enc_output_x, out1, padding_mask)
+        attn2, attn_weights_block2 = self.mha2(enc_output, enc_output, out1, padding_mask)
         attn2 = self.dropout2(attn2, training=training)
         out2 = self.layernorm2(attn2 + out1)
 
         ffn_output = self.ffn(out2)
         ffn_output = self.dropout3(ffn_output, training=training)
-        out3 = self.layernorm3(out2 + ffn_output)
+        out3 = self.layernorm3(ffn_output + out2)
 
         return out3, attn_weights_block1, attn_weights_block2
 
 
 class Encoder(layers.Layer):
-    def __init__(self, name, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals=40,
-                 dropout_rate=0.1):
-        super(Encoder, self).__init__(name=name)
+    def __init__(self, n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d=0.1):
+        super(Encoder, self).__init__()
 
         self.d_model = d_model
-        self.num_layers = num_layers
+        self.n_layer = n_layer
+        self.spe = get_spe(l_half, d_model)[np.newaxis, :, :, np.newaxis, :]
 
-        self.ex_encoding = Sequential(
-            [
-                layers.Dense(d_model * 2, activation='relu'),
-                layers.Dense(d_model, activation='sigmoid')
-            ]
-        )
+        self.ex_encoder = ex_encoding(d_model, dff)
+        self.dropout = layers.Dropout(r_d)
 
-        self.local_conv = Local_Conv(cnn_layers, cnn_filters, num_intervals, dropout_rate)
+        self.convs = Convs(conv_layer, conv_filter, l_hist, r_d)
 
-        self.enc_layers = [EncoderLayer(d_model, num_heads, dff, dropout_rate)
-                           for _ in range(num_layers)]
+        self.encs = [EncoderLayer(d_model, n_head, dff, r_d) for _ in range(n_layer)]
 
     def call(self, x, ex, training, mask):
-        ex_enc = self.ex_encoding(ex[:, :, :55])
-        pos_enc = tf.expand_dims(tf.expand_dims(ex_enc, axis=1), axis=1)
+        ex_enc = self.ex_encoder(ex)[:, tf.newaxis, tf.newaxis, :, :]
 
-        x = self.local_conv(x, training)
+        x = self.convs(x, training)
         x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
-        x += pos_enc
+        x += ex_enc + self.spe
 
-        for i in range(self.num_layers):
-            x = self.enc_layers[i](x, training, mask)
+        x = self.dropout(x, training=training)
+
+        for i in range(self.n_layer):
+            x = self.encs[i](x, training, mask)
 
         return x
 
 
 class Decoder(layers.Layer):
-    def __init__(self, name, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, dropout_rate=0.1):
-        super(Decoder, self).__init__(name=name)
+    def __init__(self, n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_half, r_d=0.1):
+        super(Decoder, self).__init__()
 
         self.d_model = d_model
-        self.num_layers = num_layers
+        self.n_layer = n_layer
+        self.spe = get_spe(l_half, d_model)[np.newaxis, :, :, np.newaxis, :]
 
-        self.local_conv = Local_Conv(cnn_layers, cnn_filters, 1, dropout_rate)
+        self.ex_encoder = ex_encoding(d_model, dff)
+        self.dropout = layers.Dropout(r_d)
 
-        self.ex_encoding = Sequential(
-            [
-                layers.Dense(d_model * 2, activation='relu'),
-                layers.Dense(d_model, activation='sigmoid')
-            ]
-        )
+        self.convs = Convs(conv_layer, conv_filter, 1, r_d)
 
-        self.dec_layers = [DecoderLayer(d_model, num_heads, dff, dropout_rate)
-                           for _ in range(num_layers)]
+        self.decs = [DecoderLayer(d_model, n_head, dff, r_d) for _ in range(n_layer)]
 
-    def call(self, x, ex, enc_output, training,
-             look_ahead_mask, padding_mask):
+    def call(self, x, ex, enc_output, training, look_ahead_mask, padding_mask):
         attention_weights = {}
 
-        ex_enc = self.ex_encoding(ex[:, :, :55])
-        pos_enc = tf.expand_dims(tf.expand_dims(ex_enc, axis=1), axis=1)
+        ex_enc = self.ex_encoder(ex)[:, tf.newaxis, tf.newaxis, :, :]
 
-        x = self.local_conv(x, training=training)
+        x = self.convs(x, training)
         x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
-        x += pos_enc
+        x += ex_enc + self.spe
 
-        for i in range(self.num_layers):
-            x, block1, block2 = self.dec_layers[i](x, enc_output, training, look_ahead_mask, padding_mask)
+        x = self.dropout(x, training=training)
+
+        for i in range(self.n_layer):
+            x, block1, block2 = self.decs[i](x, enc_output, training, look_ahead_mask, padding_mask)
             attention_weights['decoder_layer{}_block1'.format(i + 1)] = block1
             attention_weights['decoder_layer{}_block2'.format(i + 1)] = block2
 
         return x, attention_weights
 
 
-""" define the model structure for Stream-T """
+class Stream(layers.Layer):
+    def __init__(self, name, n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d=0.1):
+        super(Stream, self).__init__(name=name)
+
+        self.encoder = Encoder(n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d)
+
+        self.decoder = Decoder(n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_half, r_d)
+
+    def call(self, x, enc_ex, dec_x, dec_ex, training, enc_padding_mask, look_ahead_mask, dec_padding_mask):
+        enc_output = self.encoder(x, enc_ex, training, enc_padding_mask)
+
+        dec_output, attention_weights = \
+            self.decoder(dec_x, dec_ex, enc_output, training, look_ahead_mask, dec_padding_mask)
+
+        return dec_output, attention_weights
 
 
 class Stream_T(Model):
-    def __init__(self, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, output_size,
-                 num_intervals,
-                 dropout_rate=0.1):
+    def __init__(self, n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d=0.1):
         super(Stream_T, self).__init__()
 
-        self.encoder = Encoder('Encoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals,
-                               dropout_rate)
+        self.stream_t = Stream('stream-t', n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d)
+        self.dense = layers.Dense(4, activation='tanh')
+        self.dropout = layers.Dropout(r_d)
 
-        self.decoder = Decoder('Decoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, dropout_rate)
+    def call(self, enc_inp, enc_ex, dec_inp, dec_ex, training,
+             enc_padding_mask, look_ahead_mask, dec_padding_mask):
+        dec_output_t, attention_weights_t = \
+            self.stream_t(enc_inp, enc_ex, dec_inp, dec_ex, training,
+                          enc_padding_mask, look_ahead_mask, dec_padding_mask)
 
-        self.final_layer = layers.Dense(output_size, activation='tanh')
-        self.dropout = layers.Dropout(dropout_rate)
+        output = self.dense(self.dropout(tf.squeeze(dec_output_t), training=training))
 
-    def call(self, x_hist, ex_hist, x_curr, ex_curr, training, enc_padding_mask=None,
-             look_ahead_mask=None,
-             dec_padding_mask=None):
-        # concat all historical data to form the encoder input
-        x_enc_inputs = tf.concat([x_hist, x_curr[:, :, :, 1:, :]], axis=-2)
-        ex_enc_inputs = tf.concat([ex_hist, ex_curr[:, 1:, :]], axis=-2)
-        # x_enc_inputs = x[:, :, :, :-1, :]
-        # ex_enc_inputs = ex[:, :-1, :]
-
-        # use the last interval as the decoder output
-        x_dec_input = x_curr[:, :, :, -1:, :]
-        ex_dec_input = ex_curr[:, -1:, :]
-
-        enc_output = self.encoder(x_enc_inputs, ex_enc_inputs, training, enc_padding_mask)
-
-        dec_output, attention_weights = self.decoder(
-            x_dec_input, ex_dec_input, enc_output, training, look_ahead_mask, dec_padding_mask)
-
-        dec_output = tf.squeeze(dec_output)
-
-        dec_output = self.dropout(dec_output)
-
-        final_output = self.final_layer(dec_output)
-
-        return final_output, attention_weights
+        return output, attention_weights_t
 
 
-class ST_SAN(Model):
-    def __init__(self, stream_t, num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters, num_intervals, d_final,
-                 dropout_rate):
-        super(ST_SAN, self).__init__()
+class STSAN(Model):
+    def __init__(self, stream_t, n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d=0.1):
+        super(STSAN, self).__init__()
 
-        self.flow_encoder = Encoder('Flow_Encoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters,
-                                    num_intervals,
-                                    dropout_rate)
-        self.flow_decoder = Decoder('Flow_Decoder', num_layers, d_model, num_heads, dff, cnn_layers, cnn_filters,
-                                    dropout_rate)
+        self.stream_f = Stream('stream-f', n_layer, d_model, n_head, dff, conv_layer, conv_filter, l_hist, l_half, r_d)
+        self.final_convs = Gated_Fusion(d_model, l_half, r_d)
 
-        self.trans_encoder = stream_t.get_layer('Encoder')
-        self.trans_decoder = stream_t.get_layer('Decoder')
+        self.stream_t = stream_t.get_layer('stream-t')
+        self.stream_t.trainable = False
 
-        self.trans_encoder.trainable = False
-        self.trans_decoder.trainable = False
+    def call(self, enc_ft, enc_ex, dec_ft, dec_ex, training,
+             enc_padding_mask, look_ahead_mask, dec_padding_mask):
+        dec_output_f, attention_weights_f = \
+            self.stream_f(enc_ft[..., :2], enc_ex, dec_ft[..., :2], dec_ex, training,
+                          enc_padding_mask[0], look_ahead_mask[0], dec_padding_mask[0])
 
-        self.final_layer = Masked_Fusion('Masked_Fusion', d_final, dropout_rate)
+        dec_output_t, attention_weights_t = \
+            self.stream_t(enc_ft[..., 2:], enc_ex, dec_ft[..., 2:], dec_ex, False,
+                          enc_padding_mask[1], look_ahead_mask[1], dec_padding_mask[1])
 
-    def call(self, flow_hist, trans_hist, ex_hist, flow_curr, trans_curr, ex_curr, training,
-             enc_padding_mask=None, combined_mask=None, dec_padding_mask=None):
-        flow_enc_inputs = tf.concat([flow_hist, flow_curr[:, :, :, 1:, :]], axis=-2)
-        trans_enc_inputs = tf.concat([trans_hist, trans_curr[:, :, :, 1:, :]], axis=-2)
-        ex_enc_inputs = tf.concat([ex_hist, ex_curr[:, 1:, :]], axis=-2)
+        output = self.final_convs(dec_output_f, dec_output_t, training)
 
-        flow_dec_input = flow_curr[:, :, :, -1:, :]
-        trans_dec_input = trans_curr[:, :, :, -1:, :]
-        ex_dec_input = ex_curr[:, -1:, :]
-
-        enc_output_flow = self.flow_encoder(flow_enc_inputs, ex_enc_inputs, training, enc_padding_mask[0])
-        enc_output_trans = self.trans_encoder(trans_enc_inputs, ex_enc_inputs, False, enc_padding_mask[1])
-
-        dec_output_flow, attention_weights_t = self.flow_decoder(flow_dec_input, ex_dec_input, enc_output_flow,
-                                                                 training, combined_mask[0], dec_padding_mask[0])
-        dec_output_trans, _ = self.trans_decoder(trans_dec_input, ex_dec_input, enc_output_trans, False,
-                                                 combined_mask[1], dec_padding_mask[1])
-
-        final_output = self.final_layer(dec_output_flow, dec_output_trans, training)
-
-        return final_output, attention_weights_t
+        return output, [attention_weights_f, attention_weights_t]

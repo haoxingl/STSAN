@@ -1,283 +1,252 @@
 import numpy as np
-import parameters_nyctaxi as param_taxi
-import parameters_nycbike as param_bike
+from data_parameters import data_parameters
 
 
 class DataLoader:
-    def __init__(self, dataset='taxi'):
+    def __init__(self, dataset='taxi', l_half=3, pre_shuffle=True, test_model=None):
+        assert dataset in ['taxi', 'bike']
         self.dataset = dataset
-        if self.dataset == 'taxi':
-            self.parameters = param_taxi
-        elif self.dataset == 'bike':
-            self.parameters = param_bike
+        self.pmt = data_parameters[dataset]
+        self.l_half = l_half
+        self.pre_shuffle = pre_shuffle
+        self.test_model = test_model
+
+    def load_data(self, datatype='train'):
+        pred_type = self.pmt['pred_type']
+        if datatype == 'train':
+            data = np.load(self.pmt['data_train'])
+        elif datatype == 'val':
+            data = np.load(self.pmt['data_val'])
         else:
-            print('Dataset should be \'taxi\' or \'bike\'')
-            raise Exception
+            data = np.load(self.pmt['data_test'])
 
-    def load_flow(self):
-        self.flow_train = np.array(np.load(self.parameters.flow_train)['flow'],
-                                   dtype=np.float32) / self.parameters.flow_train_max
-        self.flow_test = np.array(np.load(self.parameters.flow_test)['flow'],
-                                  dtype=np.float32) / self.parameters.flow_train_max
+        self.data_mtx = np.array(data['flow'], dtype=np.float32) / np.array(self.pmt['data_max'][:pred_type],
+                                                                            dtype=np.float32)
+        self.t_mtx = np.array(data['trans'], dtype=np.float32) / np.array(self.pmt['data_max'][2], dtype=np.float32)
+        self.ex_mtx = data['ex_knlg']
 
-    def load_trans(self):
-        self.trans_train = np.array(np.load(self.parameters.trans_train)['trans'],
-                                    dtype=np.float32) / self.parameters.trans_train_max
-        self.trans_test = np.array(np.load(self.parameters.trans_test)['trans'],
-                                   dtype=np.float32) / self.parameters.trans_train_max
+    def generate_data(self, datatype='train', n_w=0, n_d=7, n_wd_times=3, n_p=1, n_before=1,
+                      load_saved_data=False, no_save=False):
 
-    """ external_knowledge contains the time and weather information of each time interval """
-
-    def load_external_knowledge(self):
-        self.ex_knlg_data_train = np.load(self.parameters.external_knowledge_train)['external_knowledge']
-        self.ex_knlg_data_test = np.load(self.parameters.external_knowledge_test)['external_knowledge']
-
-    def generate_data(self, datatype='train',
-                      num_weeks_hist=0,  # number previous weeks we generate the sample from.
-                      num_days_hist=7,  # number of the previous days we generate the sample from
-                      num_intervals_hist=3,  # number of intervals we sample in the previous weeks, days
-                      num_intervals_curr=1,  # number of intervals we sample in the current day
-                      num_intervals_before_predict=1,
-                      # number of intervals before the interval to predict in each day, used to adjust the position of the sliding windows
-                      local_block_len_half=3,  # half of the length of local convolution block
-                      load_saved_data=False):  # loading the previous saved data
+        assert datatype in ['train', 'val', 'test']
 
         """ loading saved data """
-        if load_saved_data:
-            print('Loading {} data from .npzs...'.format(datatype))
-            flow_inputs_curr = np.load("data/flow_inputs_curr_{}_{}.npz".format(self.dataset, datatype))['data']
-            transition_inputs_curr = np.load("data/transition_inputs_curr_{}_{}.npz".format(self.dataset, datatype))[
-                'data']
-            ex_inputs_curr = np.load("data/ex_inputs_curr_{}_{}.npz".format(self.dataset, datatype))['data']
-            flow_inputs_hist = np.load("data/flow_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
-            transition_inputs_hist = np.load("data/transition_inputs_hist_{}_{}.npz".format(self.dataset, datatype))[
-                'data']
-            ex_inputs_hist = np.load("data/ex_inputs_hist_{}_{}.npz".format(self.dataset, datatype))['data']
-            ys = np.load("data/ys_{}_{}.npz".format(self.dataset, datatype))['data']
-            ys_transitions = np.load("data/ys_transitions_{}_{}.npz".format(self.dataset, datatype))['data']
-
-            return flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, ex_inputs_curr, ys_transitions, ys
+        if load_saved_data and not self.test_model:
+            enc_inp_ft = np.load("data/enc_inp_ft_{}_{}.npz".format(self.dataset, datatype))['data']
+            enc_inp_ex = np.load("data/enc_inp_ex_{}_{}.npz".format(self.dataset, datatype))['data']
+            dec_inp_ft = np.load("data/dec_inp_ft_{}_{}.npz".format(self.dataset, datatype))['data']
+            dec_inp_ex = np.load("data/dec_inp_ex_{}_{}.npz".format(self.dataset, datatype))['data']
+            y = np.load("data/y_{}_{}.npz".format(self.dataset, datatype))['data']
+            y_t = np.load("data/y_t_{}_{}.npz".format(self.dataset, datatype))['data']
         else:
             print("Loading {} data...".format(datatype))
             """ loading data """
-            self.load_flow()
-            self.load_trans()
-            self.load_external_knowledge()
+            self.load_data(datatype)
 
-            if datatype == "train":
-                flow_data = self.flow_train
-                trans_data = self.trans_train
-                ex_knlg_data = self.ex_knlg_data_train
-            elif datatype == "test":
-                flow_data = self.flow_test
-                trans_data = self.trans_test
-                ex_knlg_data = self.ex_knlg_data_test
-            else:
-                print("Please select **train** or **test**")
-                raise Exception
+            data_mtx = self.data_mtx
+            ex_mtx = self.ex_mtx
+            t_mtx = self.t_mtx
+            data_shape = data_mtx.shape
 
-            num_intervals_curr += 1  # we add one more interval to be taken as the current input
+            l_half = self.l_half
+            if l_half:
+                l_full = 2 * l_half + 1
 
             """ initialize the array to hold the final inputs """
-            ys = []  # ground truth of the inflow and outflow of each node at each time interval
-            ys_transitions = []  # ground truth of the transitions between each node and its neighbors in the area of interest
 
-            flow_inputs_hist = []  # historical flow inputs from area of interest
-            transition_inputs_hist = []  # historical transition inputs from area of interest
-            ex_inputs_hist = []  # historical external knowledge inputs
+            enc_inp_ft = []
+            enc_inp_ex = []
 
-            flow_inputs_curr = []  # flow inputs of current day
-            transition_inputs_curr = []  # transition inputs of current day
-            ex_inputs_curr = []  # external knowledge inputs of current day
+            dec_inp_ft = []
+            dec_inp_ex = []
 
-            assert num_weeks_hist >= 0 and num_days_hist >= 1
+            y = []
+            y_t = []
+
+            assert n_w >= 0 and n_d >= 0 and n_d <= 7
             """ set the start time interval to sample the data"""
-            s1 = num_days_hist * self.parameters.time_interval_daily + num_intervals_before_predict
-            s2 = num_weeks_hist * 7 * self.parameters.time_interval_daily + num_intervals_before_predict
+            s1 = n_d * self.pmt['n_int'] + n_before
+            s2 = n_w * 7 * self.pmt['n_int'] + n_before
             time_start = max(s1, s2)
-            time_end = flow_data.shape[0]
+            time_end = data_shape[0]
 
             for t in range(time_start, time_end):
-                if t % 100 == 0:
-                    print("Currently at {} interval...".format(t))
+                if (t - time_start + 1) % 100 == 0:
+                    print("Loading {}/{}".format(t - time_start + 1, time_end - time_start))
 
-                for x in range(flow_data.shape[1]):
-                    for y in range(flow_data.shape[2]):
+                for r in range(data_shape[1]):
+                    for c in range(data_shape[2]):
 
                         """ initialize the array to hold the samples of each node at each time interval """
-                        flow_inputs_hist_sample = []
-                        transition_inputs_hist_sample = []
-                        ex_inputs_hist_sample = []
 
-                        flow_inputs_curr_sample = []
-                        transition_inputs_curr_sample = []
-                        ex_inputs_curr_sample = []
+                        enc_inp_ft_sample = []
+                        enc_inp_ex_sample = []
 
-                        """ initialize the boundaries of the area of interest """
-                        x_start = x - local_block_len_half  # the start location of each AoI
-                        y_start = y - local_block_len_half
+                        if l_half:
+                            """ initialize the boundaries of the area of interest """
+                            r_start = r - l_half  # the start location of each AoI
+                            c_start = c - l_half
 
-                        """ adjust the start location if it is on the boundaries of the grid map """
-                        if x_start < 0:
-                            x_start_local = 0 - x_start
-                            x_start = 0
-                        else:
-                            x_start_local = 0
-                        if y_start < 0:
-                            y_start_local = 0 - y_start
-                            y_start = 0
-                        else:
-                            y_start_local = 0
+                            """ adjust the start location if it is on the boundaries of the grid map """
+                            if r_start < 0:
+                                r_start_l = 0 - r_start
+                                r_start = 0
+                            else:
+                                r_start_l = 0
+                            if c_start < 0:
+                                c_start_l = 0 - c_start
+                                c_start = 0
+                            else:
+                                c_start_l = 0
 
-                        x_end = x + local_block_len_half + 1  # the end location of each AoI
-                        y_end = y + local_block_len_half + 1
-                        if x_end >= flow_data.shape[1]:
-                            x_end_local = 2 * local_block_len_half + 1 - (x_end - flow_data.shape[1])
-                            x_end = flow_data.shape[1]
-                        else:
-                            x_end_local = 2 * local_block_len_half + 1
-                        if y_end >= flow_data.shape[2]:
-                            y_end_local = 2 * local_block_len_half + 1 - (y_end - flow_data.shape[2])
-                            y_end = flow_data.shape[2]
-                        else:
-                            y_end_local = 2 * local_block_len_half + 1
+                            r_end = r + l_half + 1  # the end location of each AoI
+                            c_end = c + l_half + 1
+                            if r_end >= data_shape[1]:
+                                r_end_l = l_full - (r_end - data_shape[1])
+                                r_end = data_shape[1]
+                            else:
+                                r_end_l = l_full
+                            if c_end >= data_shape[2]:
+                                c_end_l = l_full - (c_end - data_shape[2])
+                                c_end = data_shape[2]
+                            else:
+                                c_end_l = l_full
 
                         """ start the samplings of previous weeks """
-                        for week_cnt in range(num_weeks_hist):
-                            this_week_start_time = int(t - (
-                                    num_weeks_hist - week_cnt) * 7 * self.parameters.time_interval_daily - num_intervals_before_predict)
+                        t_hist = []
 
-                            for int_cnt in range(num_intervals_hist):
-                                t_now = this_week_start_time + int_cnt
-                                local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
-                                                      dtype=np.float32)
-                                local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[t_now,
-                                                                                                      x_start:x_end,
-                                                                                                      y_start:y_end, :]
+                        for week_cnt in range(n_w):
+                            s_time_w = int(t - (n_w - week_cnt) * 7 * self.pmt['n_int'] - n_before)
 
-                                local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
-                                                       dtype=np.float32)
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
-                                    trans_data[0, t_now, x_start:x_end, y_start:y_end, x, y]
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
-                                    trans_data[1, t_now, x_start:x_end, y_start:y_end, x, y]
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
-                                    trans_data[0, t_now, x, y, x_start:x_end, y_start:y_end]
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
-                                    trans_data[1, t_now, x, y, x_start:x_end, y_start:y_end]
-
-                                flow_inputs_hist_sample.append(local_flow)
-                                transition_inputs_hist_sample.append(local_trans)
-                                ex_inputs_hist_sample.append(ex_knlg_data[t_now, :])
+                            for int_cnt in range(n_wd_times):
+                                t_hist.append(s_time_w + int_cnt)
 
                         """ start the samplings of previous days"""
-                        for hist_day_cnt in range(num_days_hist):
+                        for hist_day_cnt in range(n_d):
                             """ define the start time in previous days """
-                            hist_day_start_time = int(t - (
-                                    num_days_hist - hist_day_cnt) * self.parameters.time_interval_daily - num_intervals_before_predict)
+                            s_time_d = int(t - (n_d - hist_day_cnt) * self.pmt['n_int'] - n_before)
 
                             """ generate samples from the previous days """
-                            for int_cnt in range(num_intervals_hist):
-                                t_now = hist_day_start_time + int_cnt
-
-                                # define the matrix to hold the historical flow inputs of AoI
-                                local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
-                                                      dtype=np.float32)
-                                # assign historical flow data
-                                local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[t_now,
-                                                                                                      x_start:x_end,
-                                                                                                      y_start:y_end, :]
-
-                                # define the matrix to hold the historical transition inputs of AoI
-                                local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
-                                                       dtype=np.float32)
-                                """ this part is a little abstract, the point is to sample the in and out transition
-                                    whose duration is less than 2 time intervals """
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
-                                    trans_data[0, t_now, x_start:x_end, y_start:y_end, x, y]
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
-                                    trans_data[1, t_now, x_start:x_end, y_start:y_end, x, y]
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
-                                    trans_data[0, t_now, x, y, x_start:x_end, y_start:y_end]
-                                local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
-                                    trans_data[1, t_now, x, y, x_start:x_end, y_start:y_end]
-
-                                flow_inputs_hist_sample.append(local_flow)
-                                transition_inputs_hist_sample.append(local_trans)
-                                ex_inputs_hist_sample.append(ex_knlg_data[t_now, :])
+                            for int_cnt in range(n_wd_times):
+                                t_hist.append(s_time_d + int_cnt)
 
                         """ sampling of inputs of current day, the details are similar to those mentioned above """
-                        for int_cnt in range(num_intervals_curr):
-                            t_now = int(t - (num_intervals_curr - int_cnt))
+                        for int_cnt in range(n_p):
+                            t_hist.append(t - n_p + int_cnt)
 
-                            local_flow = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 2),
-                                                  dtype=np.float32)
-                            local_flow[x_start_local:x_end_local, y_start_local:y_end_local, :] = flow_data[
-                                                                                                  t_now,
-                                                                                                  x_start:x_end,
-                                                                                                  y_start:y_end,
-                                                                                                  :]
+                        for t_now in t_hist:
+                            if not l_half:
+                                one_inp = data_mtx[t_now, ...]
 
-                            local_trans = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
-                                                   dtype=np.float32)
-                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
-                                trans_data[0, t_now, x_start:x_end, y_start:y_end, x, y]
-                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
-                                trans_data[1, t_now, x_start:x_end, y_start:y_end, x, y]
-                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
-                                trans_data[0, t_now, x, y, x_start:x_end, y_start:y_end]
-                            local_trans[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
-                                trans_data[1, t_now, x, y, x_start:x_end, y_start:y_end]
+                                one_inp_t = np.zeros((data_shape[1], data_shape[2], 4), dtype=np.float32)
+                                one_inp_t[..., 0] = t_mtx[t_now, ..., r, c, 0]
+                                one_inp_t[..., 1] = t_mtx[t_now, ..., r, c, 1]
+                                one_inp_t[..., 2] = t_mtx[t_now, r, c, ..., 0]
+                                one_inp_t[..., 3] = t_mtx[t_now, r, c, ..., 1]
+                            else:
+                                one_inp = np.zeros((l_full, l_full, 2), dtype=np.float32)
+                                one_inp[r_start_l:r_end_l, c_start_l:c_end_l, :] = \
+                                    data_mtx[t_now, r_start:r_end, c_start:c_end, :]
 
-                            flow_inputs_curr_sample.append(local_flow)
-                            transition_inputs_curr_sample.append(local_trans)
-                            ex_inputs_curr_sample.append(ex_knlg_data[t_now, :])
+                                one_inp_t = np.zeros((l_full, l_full, 4), dtype=np.float32)
+                                one_inp_t[r_start_l:r_end_l, c_start_l:c_end_l, 0] = \
+                                    t_mtx[t_now, r_start:r_end, c_start:c_end, r, c, 0]
+                                one_inp_t[r_start_l:r_end_l, c_start_l:c_end_l, 1] = \
+                                    t_mtx[t_now, r_start:r_end, c_start:c_end, r, c, 1]
+                                one_inp_t[r_start_l:r_end_l, c_start_l:c_end_l, 2] = \
+                                    t_mtx[t_now, r, c, r_start:r_end, c_start:c_end, 0]
+                                one_inp_t[r_start_l:r_end_l, c_start_l:c_end_l, 3] = \
+                                    t_mtx[t_now, r, c, r_start:r_end, c_start:c_end, 1]
 
-                        """ append the samples of each node to the overall inputs arrays """
-                        flow_inputs_curr.append(np.array(flow_inputs_curr_sample, dtype=np.float32))
-                        transition_inputs_curr.append(np.array(transition_inputs_curr_sample, dtype=np.float32))
-                        ex_inputs_curr.append(np.array(ex_inputs_curr_sample, dtype=np.float32))
-                        flow_inputs_hist.append(np.array(flow_inputs_hist_sample, dtype=np.float32))
-                        transition_inputs_hist.append(np.array(transition_inputs_hist_sample, dtype=np.float32))
-                        ex_inputs_hist.append(np.array(ex_inputs_hist_sample, dtype=np.float32))
+                            enc_inp_ft_sample.append(np.concatenate([one_inp, one_inp_t], axis=-1))
+                            enc_inp_ex_sample.append(ex_mtx[t_now, :])
 
-                        """ generating the ground truth for each sample """
-                        ys.append(flow_data[t, x, y, :])
+                        enc_inp_ft.append(enc_inp_ft_sample)
+                        enc_inp_ex.append(enc_inp_ex_sample)
 
-                        tar_t = np.zeros((2 * local_block_len_half + 1, 2 * local_block_len_half + 1, 4),
-                                         dtype=np.float32)
-                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 0] = \
-                            trans_data[0, t, x_start:x_end, y_start:y_end, x, y]
-                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 1] = \
-                            trans_data[1, t, x_start:x_end, y_start:y_end, x, y]
-                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 2] = \
-                            trans_data[0, t, x, y, x_start:x_end, y_start:y_end]
-                        tar_t[x_start_local:x_end_local, y_start_local:y_end_local, 3] = \
-                            trans_data[1, t, x, y, x_start:x_end, y_start:y_end]
+                        if not l_half:
+                            dec_inp_f_sample = data_mtx[t - 1:t, ..., :]
 
-                        ys_transitions.append(tar_t)
+                            dec_inp_t_sample = np.zeros((1, data_shape[1], data_shape[2], 4), dtype=np.float32)
+                            dec_inp_t_sample[..., 0] = t_mtx[t - 1:t, ..., r, c, 0]
+                            dec_inp_t_sample[..., 1] = t_mtx[t - 1:t, ..., r, c, 1]
+                            dec_inp_t_sample[..., 2] = t_mtx[t - 1:t, r, c, ..., 0]
+                            dec_inp_t_sample[..., 3] = t_mtx[t - 1:t, r, c, ..., 1]
+
+                            tar_t = np.zeros((data_shape[1], data_shape[2], 4), dtype=np.float32)
+                            tar_t[..., 0] = t_mtx[t, ..., r, c, 0]
+                            tar_t[..., 1] = t_mtx[t, ..., r, c, 1]
+                            tar_t[..., 2] = t_mtx[t, r, c, ..., 0]
+                            tar_t[..., 3] = t_mtx[t, r, c, ..., 1]
+                        else:
+                            dec_inp_f_sample = np.zeros((1, l_full, l_full, 2), dtype=np.float32)
+                            dec_inp_f_sample[:, r_start_l:r_end_l, c_start_l:c_end_l, :] = \
+                                data_mtx[t - 1:t, r_start:r_end, c_start:c_end, :]
+
+                            dec_inp_t_sample = np.zeros((1, l_full, l_full, 4), dtype=np.float32)
+                            dec_inp_t_sample[:, r_start_l:r_end_l, c_start_l:c_end_l, 0] = \
+                                t_mtx[t - 1:t, r_start:r_end, c_start:c_end, r, c, 0]
+                            dec_inp_t_sample[:, r_start_l:r_end_l, c_start_l:c_end_l, 1] = \
+                                t_mtx[t - 1:t, r_start:r_end, c_start:c_end, r, c, 1]
+                            dec_inp_t_sample[:, r_start_l:r_end_l, c_start_l:c_end_l, 2] = \
+                                t_mtx[t - 1:t, r, c, r_start:r_end, c_start:c_end, 0]
+                            dec_inp_t_sample[:, r_start_l:r_end_l, c_start_l:c_end_l, 3] = \
+                                t_mtx[t - 1:t, r, c, r_start:r_end, c_start:c_end, 1]
+
+                            tar_t = np.zeros((l_full, l_full, 4), dtype=np.float32)
+                            tar_t[r_start_l:r_end_l, c_start_l:c_end_l, 0] = \
+                                t_mtx[t, r_start:r_end, c_start:c_end, r, c, 0]
+                            tar_t[r_start_l:r_end_l, c_start_l:c_end_l, 1] = \
+                                t_mtx[t, r_start:r_end, c_start:c_end, r, c, 1]
+                            tar_t[r_start_l:r_end_l, c_start_l:c_end_l, 2] = \
+                                t_mtx[t, r, c, r_start:r_end, c_start:c_end, 0]
+                            tar_t[r_start_l:r_end_l, c_start_l:c_end_l, 3] = \
+                                t_mtx[t, r, c, r_start:r_end, c_start:c_end, 1]
+
+                        dec_inp_ft.append(np.concatenate([dec_inp_f_sample, dec_inp_t_sample], axis=-1))
+                        dec_inp_ex.append(ex_mtx[t - 1:t, :])
+                        y_t.append(tar_t)
+                        y.append(data_mtx[t, r, c, :])
+
+                if self.test_model and t + 1 - time_start >= self.test_model:
+                    break
 
             """ convert the inputs arrays to matrices """
-            flow_inputs_curr = np.array(flow_inputs_curr, dtype=np.float32).transpose((0, 2, 3, 1, 4))
-            transition_inputs_curr = np.array(transition_inputs_curr, dtype=np.float32).transpose((0, 2, 3, 1, 4))
-            ex_inputs_curr = np.array(ex_inputs_curr, dtype=np.float32)
-            flow_inputs_hist = np.array(flow_inputs_hist, dtype=np.float32).transpose((0, 2, 3, 1, 4))
-            transition_inputs_hist = np.array(transition_inputs_hist, dtype=np.float32).transpose((0, 2, 3, 1, 4))
-            ex_inputs_hist = np.array(ex_inputs_hist, dtype=np.float32)
+            enc_inp_ft = np.array(enc_inp_ft, dtype=np.float32).transpose((0, 2, 3, 1, 4))
+            enc_inp_ex = np.array(enc_inp_ex, dtype=np.float32)
 
-            ys = np.array(ys, dtype=np.float32)
-            ys_transitions = np.array(ys_transitions, dtype=np.float32)
+            dec_inp_ft = np.array(dec_inp_ft, dtype=np.float32).transpose((0, 2, 3, 1, 4))
+            dec_inp_ex = np.array(dec_inp_ex, dtype=np.float32)
+
+            y = np.array(y, dtype=np.float32)
+            y_t = np.array(y_t, dtype=np.float32)
 
             """ save the matrices """
-            np.savez_compressed("data/flow_inputs_curr_{}_{}.npz".format(self.dataset, datatype), data=flow_inputs_curr)
-            np.savez_compressed("data/transition_inputs_curr_{}_{}.npz".format(self.dataset, datatype),
-                                data=transition_inputs_curr)
-            np.savez_compressed("data/ex_inputs_curr_{}_{}.npz".format(self.dataset, datatype), data=ex_inputs_curr)
-            np.savez_compressed("data/flow_inputs_hist_{}_{}.npz".format(self.dataset, datatype), data=flow_inputs_hist)
-            np.savez_compressed("data/transition_inputs_hist_{}_{}.npz".format(self.dataset, datatype),
-                                data=transition_inputs_hist)
-            np.savez_compressed("data/ex_inputs_hist_{}_{}.npz".format(self.dataset, datatype), data=ex_inputs_hist)
-            np.savez_compressed("data/ys_{}_{}.npz".format(self.dataset, datatype), data=ys)
-            np.savez_compressed("data/ys_transitions_{}_{}.npz".format(self.dataset, datatype), data=ys_transitions)
+            if not (self.test_model or no_save):
+                print('Saving .npz files...')
+                np.savez_compressed("data/enc_inp_ft_{}_{}.npz".format(self.dataset, datatype), data=enc_inp_ft)
+                np.savez_compressed("data/enc_inp_ex_{}_{}.npz".format(self.dataset, datatype), data=enc_inp_ex)
+                np.savez_compressed("data/dec_inp_ft_{}_{}.npz".format(self.dataset, datatype), data=dec_inp_ft)
+                np.savez_compressed("data/dec_inp_ex_{}_{}.npz".format(self.dataset, datatype), data=dec_inp_ex)
+                np.savez_compressed("data/y_t_{}_{}.npz".format(self.dataset, datatype), data=y_t)
+                np.savez_compressed("data/y_{}_{}.npz".format(self.dataset, datatype), data=y)
 
-            return flow_inputs_hist, transition_inputs_hist, ex_inputs_hist, flow_inputs_curr, transition_inputs_curr, ex_inputs_curr, ys_transitions, ys
+        if self.pre_shuffle and datatype == 'train':
+            inp_shape = enc_inp_ft.shape[0]
+            train_size = int(inp_shape * 0.8)
+            random_index = np.random.permutation(inp_shape)
+
+            enc_inp_ft = np.split(enc_inp_ft[random_index, ...], (train_size,))
+            enc_inp_ex = np.split(enc_inp_ex[random_index, ...], (train_size,))
+            dec_inp_ft = np.split(dec_inp_ft[random_index, ...], (train_size,))
+            dec_inp_ex = np.split(dec_inp_ex[random_index, ...], (train_size,))
+
+            y = np.split(y[random_index, ...], (train_size,))
+            y_t = np.split(y_t[random_index, ...], (train_size,))
+
+        return enc_inp_ft, enc_inp_ex, dec_inp_ft, dec_inp_ex, y_t, y
+
+
+if __name__ == "__main__":
+    dl = DataLoader(64)
+    enc_inp_ft, enc_inp_ex, dec_inp_ft, dec_inp_ex, y_t, y = dl.generate_data()
